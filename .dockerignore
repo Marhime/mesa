@@ -1,0 +1,25 @@
+# Build context = repository root. Keep it small: the worker image only needs the workspace
+# manifests, the lockfile, packages/shared and apps/worker.
+**/node_modules
+**/dist
+**/coverage
+**/*.log
+**/.DS_Store
+.git
+.claude
+
+# secrets and local state
+**/.env
+**/.env.*
+!**/.env.example
+infra/vps/backups
+infra/vps/secrets
+
+# not needed to build the worker (apps/mobile/package.json stays: pnpm checks the lockfile against it)
+apps/mobile/ios
+apps/mobile/android
+apps/mobile/.expo
+apps/mobile/assets
+db-tests
+docs
+supabase

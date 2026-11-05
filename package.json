@@ -1,0 +1,13 @@
+{
+  "name": "mesa",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@10.28.0",
+  "scripts": {
+    "typecheck": "pnpm -r --if-present typecheck",
+    "test": "pnpm -r --if-present test",
+    "test:db": "bash db-tests/run.sh",
+    "mobile": "pnpm --filter @mesa/mobile start",
+    "worker": "pnpm --filter @mesa/worker dev"
+  }
+}

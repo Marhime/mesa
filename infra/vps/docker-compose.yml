@@ -1,0 +1,40 @@
+# Mesa on a VPS: the recipe import worker and a nightly database backup.
+#   cd infra/vps && cp .env.example .env && docker compose up -d --build
+name: mesa
+
+services:
+  worker:
+    build:
+      context: ../..
+      dockerfile: apps/worker/Dockerfile
+    image: mesa-worker:latest
+    env_file: .env
+    restart: unless-stopped
+    # in-flight imports get 45 s to finish on shutdown, then go back to the queue
+    stop_grace_period: 60s
+    mem_limit: 512m
+    volumes:
+      # optional: put an Instagram cookies.txt here and set YTDLP_COOKIES=/secrets/cookies.txt
+      - ./secrets:/secrets:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  backup:
+    image: postgres:17-alpine
+    env_file: .env
+    environment:
+      TZ: America/Mexico_City
+    entrypoint: ["/bin/sh", "/usr/local/bin/mesa-backup.sh"]
+    volumes:
+      - ./backup.sh:/usr/local/bin/mesa-backup.sh:ro
+      - ./backups:/backups
+    restart: unless-stopped
+    mem_limit: 256m
+    logging:
+      driver: json-file
+      options:
+        max-size: 5m
+        max-file: "2"

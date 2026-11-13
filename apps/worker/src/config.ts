@@ -13,9 +13,22 @@ export interface Config {
   /** cookies.txt (Netscape format) passed to yt-dlp, mainly for Instagram. */
   ytdlpCookies: string | null;
   concurrency: number;
+  /** Slots on top of `concurrency` that take only a person's quick jobs (Ask Mesa, rereads): a question never waits behind an import. 0 = none. */
+  quickSlots: number;
   logLevel: LogLevel;
   /** Only needed when "Enhanced push security" is on in the Expo project. */
   expoAccessToken: string | null;
+  /** Pinged about once a minute while the worker can reach the queue (healthchecks.io "ping URL"); null = off. */
+  healthcheckUrl: string | null;
+  /** The day's (UTC) ceiling on AI tokens, input and output (thinking included) together (ai-budget.ts). */
+  aiDailyTokenLimit: number;
+  /** The day's (UTC) ceiling on model calls. */
+  aiDailyCallLimit: number;
+  /**
+   * The pause after a job the server queued (rereads, tidying, For you…) before the slot claims again,
+   * unless a new job comes in: server work stays under the model's per-minute limits and leaves them to people.
+   */
+  serverJobGapMs: number;
 }
 
 export class ConfigError extends Error {
@@ -32,6 +45,12 @@ const PLACEHOLDER = /YOUR[-_]|^<.*>$|^changeme$/i;
 export const DEFAULT_GEMINI_MODEL = 'gemini-3.8-flash';
 /** Older generations: less demand when the newest model is overloaded. "none" turns fallbacks off. */
 export const DEFAULT_GEMINI_FALLBACK_MODELS = ['gemini-3.6-flash', 'gemini-3.5-flash'];
+/**
+ * The day's AI ceiling, far above a normal day (an import is one to three calls of a few thousand to a few
+ * hundred thousand tokens; a 3-minute video is the big one): it stops a runaway loop or an abuse, not use.
+ */
+export const DEFAULT_AI_DAILY_TOKEN_LIMIT = 20_000_000;
+export const DEFAULT_AI_DAILY_CALL_LIMIT = 3000;
 
 /** Reads and validates the worker's environment. Throws ConfigError listing every problem. */
 export function loadConfig(env: Env): Config {
@@ -82,6 +101,10 @@ export function loadConfig(env: Env): Config {
   const ytdlpPath = value('YTDLP_PATH') ?? 'yt-dlp';
   const ytdlpCookies = value('YTDLP_COOKIES');
   const concurrency = integer('WORKER_CONCURRENCY', 1, 1, 8);
+  const quickSlots = integer('WORKER_QUICK_SLOTS', 1, 0, 4);
+  const aiDailyTokenLimit = integer('AI_DAILY_TOKEN_LIMIT', DEFAULT_AI_DAILY_TOKEN_LIMIT, 1, 1_000_000_000_000);
+  const aiDailyCallLimit = integer('AI_DAILY_CALL_LIMIT', DEFAULT_AI_DAILY_CALL_LIMIT, 1, 10_000_000);
+  const serverJobGapMs = integer('SERVER_JOB_GAP_MS', 30_000, 0, 600_000);
 
   const rawLevel = (value('LOG_LEVEL') ?? 'info').toLowerCase();
   let logLevel: LogLevel = 'info';
@@ -102,8 +125,13 @@ export function loadConfig(env: Env): Config {
     ytdlpPath,
     ytdlpCookies,
     concurrency,
+    quickSlots,
     logLevel,
     expoAccessToken: value('EXPO_ACCESS_TOKEN'),
+    healthcheckUrl: value('HEALTHCHECK_URL'),
+    aiDailyTokenLimit,
+    aiDailyCallLimit,
+    serverJobGapMs,
   };
 }
 

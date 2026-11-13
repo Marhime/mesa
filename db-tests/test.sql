@@ -128,13 +128,10 @@ do $$ begin
   assert (select count(*) from public.products) >= 3, 'stranger still sees the shared catalog';
 end $$;
 
+-- A wrong code opens nothing (null, and the try is counted: migration 28).
 do $$ begin
-  begin
-    perform public.join_household('WRONG1');
-    raise exception 'should have failed';
-  exception when sqlstate 'P0002' then
-    null;
-  end;
+  assert public.join_household('WRONG1') is null, 'a wrong code opens no kitchen';
+  assert public.current_household_id() is null, 'still no household';
 end $$;
 
 -- Stranger can't write into Marhime's household
@@ -157,8 +154,9 @@ declare j public.import_jobs;
 begin
   select * into j from public.claim_import_job();
   assert j.status = 'processing', 'job claimed';
+  assert j.kind = 'recipe', 'an import goes before older tidy jobs';
   assert j.attempts = 1, 'attempt counted';
-  assert (select count(*) from public.claim_import_job()) = 0, 'nothing left to claim';
+  assert (select count(*) from public.claim_import_job() where kind <> 'tidy') = 0, 'nothing left to claim but tidying';
 end $$;
 
 -- An authenticated person can't claim jobs

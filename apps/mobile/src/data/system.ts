@@ -1,6 +1,8 @@
-// OS integrations used by screens: opening links and the native share sheet.
+// OS integrations used by screens: opening links (in their app, or in the in-app browser) and the
+// native share sheet.
 import { useKeepAwake } from 'expo-keep-awake';
 import * as Linking from 'expo-linking';
+import * as WebBrowser from 'expo-web-browser';
 import { useCallback, useState } from 'react';
 import { Share } from 'react-native';
 
@@ -21,6 +23,18 @@ export function usePullToRefresh(...refetchers: (() => Promise<unknown>)[]): { r
 export function useOpenUrl(): (url: string) => void {
   return useCallback((url: string) => {
     Linking.openURL(url).catch(() => undefined);
+  }, []);
+}
+
+/**
+ * Opens a page in the in-app browser, over what is on screen (a video to watch before saving it):
+ * closing it comes back to the same place. Falls back to the video's app or the browser.
+ */
+export function useOpenInApp(): (url: string) => void {
+  return useCallback((url: string) => {
+    WebBrowser.openBrowserAsync(url, { dismissButtonStyle: 'close' }).catch(() => {
+      Linking.openURL(url).catch(() => undefined);
+    });
   }, []);
 }
 

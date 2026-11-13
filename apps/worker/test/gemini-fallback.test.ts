@@ -3,8 +3,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ImportError, MESSAGES } from '../src/errors';
 import { RecipeAI, type GeminiClient } from '../src/gemini';
 import { modelProblem } from '../src/gemini-errors';
+import { isModelRefused } from '../src/model-port';
 import type { LogFields, Logger } from '../src/log';
 import { ModelChain } from '../src/model-chain';
+import { noBudget } from './fake-deps';
 
 const busy = (status = 503): ApiError => new ApiError({ message: `{"error":{"code":${status},"status":"UNAVAILABLE"}}`, status });
 const retired = (model: string): ApiError =>
@@ -83,7 +85,7 @@ describe('RecipeAI model fallback', () => {
   it('moves to the next model at once when the first is overloaded, then starts with it while the first cools down', async () => {
     const { client, calls } = fakeGemini({ primary: [busy(503)] });
     const log = recordingLog();
-    const ai = new RecipeAI(client, new ModelChain(['primary', 'backup']), log.logger);
+    const ai = new RecipeAI(client, new ModelChain(['primary', 'backup']), log.logger, noBudget);
 
     const first = await ai.translateNames(LINES, []);
     expect(first.get(0)?.name_en).toBe('onion');
@@ -99,7 +101,7 @@ describe('RecipeAI model fallback', () => {
     const { client, calls } = fakeGemini({ old: [retired('old')] });
     const log = recordingLog();
     const chain = new ModelChain(['old', 'current']);
-    const ai = new RecipeAI(client, chain, log.logger);
+    const ai = new RecipeAI(client, chain, log.logger, noBudget);
 
     await ai.translateNames(LINES, []);
     expect(calls).toEqual(['old', 'current']);
@@ -110,7 +112,7 @@ describe('RecipeAI model fallback', () => {
   it('retries the last model with backoff, then reports "busy" to the person', async () => {
     vi.useFakeTimers();
     const { client, calls } = fakeGemini({ primary: [busy(503)], backup: [busy(503), busy(503), busy(503)] });
-    const ai = new RecipeAI(client, new ModelChain(['primary', 'backup']), recordingLog().logger);
+    const ai = new RecipeAI(client, new ModelChain(['primary', 'backup']), recordingLog().logger, noBudget);
 
     const result = ai.extractRecipe([{ text: 'recipe' }], []);
     const assertion = expect(result).rejects.toMatchObject({ userMessage: MESSAGES.aiBusy });
@@ -119,18 +121,36 @@ describe('RecipeAI model fallback', () => {
     expect(calls).toEqual(['primary', 'backup', 'backup', 'backup']);
   });
 
-  it('passes request errors through untouched, so a refused YouTube URL can still be downloaded', async () => {
+  it('says a refused request in the port terms (no other model tried), so a refused YouTube URL can still be downloaded', async () => {
     const notFound = new ApiError({ message: 'Requested entity was not found.', status: 404 });
     const { client, calls } = fakeGemini({ primary: [notFound] });
-    const ai = new RecipeAI(client, new ModelChain(['primary', 'backup']), recordingLog().logger);
+    const ai = new RecipeAI(client, new ModelChain(['primary', 'backup']), recordingLog().logger, noBudget);
 
-    await expect(ai.extractRecipe([{ text: 'recipe' }], [])).rejects.toBe(notFound);
+    const err = await ai.extractRecipe([{ text: 'recipe' }], []).catch((e: unknown) => e);
+    expect(isModelRefused(err)).toBe(true);
+    expect(err).toMatchObject({ code: 'unknown', cause: notFound });
     expect(calls).toEqual(['primary']);
+  });
+
+  it('keeps the same error contract for names and uploads', async () => {
+    const { client } = fakeGemini({ primary: [busy(503), busy(503), busy(503)] });
+    const ai = new RecipeAI(client, new ModelChain(['primary']), recordingLog().logger, noBudget);
+    vi.useFakeTimers();
+    const names = ai.translateNames([{ i: 0, line: '2 jitomates' }], []).catch((e: unknown) => e);
+    await vi.runAllTimersAsync();
+    expect(await names).toMatchObject({ code: 'aiBusy' });
+    vi.useRealTimers();
+
+    const refused = new ApiError({ message: 'File too large', status: 400 });
+    const uploads = new RecipeAI({ ...client, files: { upload: async () => { throw refused; } } } as unknown as GeminiClient, new ModelChain(['primary']), recordingLog().logger, noBudget);
+    const err = await uploads.uploadFile('/tmp/clip.mp4', 'video/mp4').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ImportError);
+    expect(err).toMatchObject({ cause: refused });
   });
 
   it('says the reader failed when the only model is retired', async () => {
     const { client } = fakeGemini({ old: [retired('old')] });
-    const ai = new RecipeAI(client, new ModelChain(['old']), recordingLog().logger);
+    const ai = new RecipeAI(client, new ModelChain(['old']), recordingLog().logger, noBudget);
 
     const err = await ai.extractRecipe([{ text: 'recipe' }], []).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ImportError);
@@ -140,7 +160,7 @@ describe('RecipeAI model fallback', () => {
   it('drops unknown model names at startup but keeps models it could not check', async () => {
     const { client } = fakeGemini({}, { typo: new ApiError({ message: 'Model is not found: models/typo', status: 404 }), flaky: new TypeError('fetch failed') });
     const log = recordingLog();
-    const ai = new RecipeAI(client, new ModelChain(['main', 'typo', 'flaky']), log.logger);
+    const ai = new RecipeAI(client, new ModelChain(['main', 'typo', 'flaky']), log.logger, noBudget);
 
     expect(await ai.checkModels()).toEqual(['main', 'flaky']);
     expect(log.names()).toEqual(expect.arrayContaining(['gemini_model_unavailable', 'gemini_model_check_failed']));

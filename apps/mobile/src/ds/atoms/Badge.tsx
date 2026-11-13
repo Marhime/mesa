@@ -16,7 +16,7 @@ export function Badge({ count }: BadgeProps) {
   if (count === undefined) return <View style={styles.dot} />;
   return (
     <View style={styles.count} accessible={false}>
-      <Text variant="overline" color="onInk" tabular>
+      <Text variant="overline" color="onInk" tabular chrome>
         {count > 99 ? '99+' : String(count)}
       </Text>
     </View>
@@ -27,7 +27,7 @@ const useStyles = createStyles((t) => ({
   dot: { width: size.dot, height: size.dot, borderRadius: radius.full, backgroundColor: t.colors.ink },
   count: {
     minWidth: size.badge,
-    height: size.badge,
+    minHeight: size.badge,
     paddingHorizontal: space.xs,
     borderRadius: radius.full,
     backgroundColor: t.colors.ink,

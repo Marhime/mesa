@@ -1,3 +1,4 @@
+import type { HapticKind } from '../haptics';
 import { createStyles } from '../theme';
 import { border, radius, shadow, size, type ColorToken } from '../tokens';
 import { Icon } from './Icon';
@@ -9,18 +10,19 @@ export interface IconButtonProps {
   /** Required: icon-only buttons must be labelled. */
   accessibilityLabel: string;
   onPress: () => void;
-  /** surface: raised disc · tint: lime (selected) · ink: filled · float: over images, with shadow · plain: no background. */
-  variant?: 'surface' | 'tint' | 'ink' | 'float' | 'plain';
+  /** surface: raised disc · ink: filled · float: over images and cards, with shadow · plain: no background. */
+  variant?: 'surface' | 'ink' | 'float' | 'plain';
   /** Fill the glyph (favorite on). */
   filled?: boolean;
   disabled?: boolean;
   accessibilityHint?: string;
   selected?: boolean;
+  /** Given at the touch (`select` for favorite and Another idea, `add`, `check`). */
+  haptic?: HapticKind;
 }
 
 const FG: Record<NonNullable<IconButtonProps['variant']>, ColorToken> = {
   surface: 'ink',
-  tint: 'onTint',
   ink: 'onInk',
   float: 'ink',
   plain: 'ink',
@@ -36,12 +38,14 @@ export function IconButton({
   disabled,
   accessibilityHint,
   selected,
+  haptic,
 }: IconButtonProps) {
   const styles = useStyles();
   return (
     <Touchable
       onPress={onPress}
       disabled={disabled}
+      haptic={haptic}
       feedback="scale"
       accessibilityLabel={accessibilityLabel}
       accessibilityHint={accessibilityHint}
@@ -62,8 +66,7 @@ const useStyles = createStyles((t) => ({
     justifyContent: 'center',
   },
   surface: { backgroundColor: t.colors.surfaceRaised, borderWidth: border.control, borderColor: t.colors.lineStrong },
-  tint: { backgroundColor: t.colors.select },
   ink: { backgroundColor: t.colors.ink },
-  float: { backgroundColor: t.colors.surfaceRaised, ...shadow.sm },
+  float: { backgroundColor: t.colors.surfaceRaised, borderWidth: border.hairline, borderColor: t.colors.floatEdge, ...shadow.sm },
   plain: { backgroundColor: 'transparent' },
 }));

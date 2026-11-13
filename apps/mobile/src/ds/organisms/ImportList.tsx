@@ -1,47 +1,36 @@
-import { View } from 'react-native';
-
+import { AnimatedList } from '../molecules/AnimatedList';
 import { SectionHeader } from '../molecules/SectionHeader';
-import { createStyles } from '../theme';
-import { space } from '../tokens';
-import { ImportRow } from './ImportRow';
-
-export interface ImportListItem {
-  id: string;
-  source: string;
-  status: 'queued' | 'processing' | 'failed';
-  error: string | null;
-}
+import { ImportRow, type ImportRowProps } from './ImportRow';
 
 export interface ImportListProps {
-  items: ImportListItem[];
-  onRetry: (id: string) => void;
-  onRemove: (id: string) => void;
-  retryingId?: string;
-  title?: string;
+  /** "Saving", "Just saved". */
+  title: string;
+  /**
+   * Your shares. A failed one's `remove` action (always its last way out) is its ×, like every card's; its
+   * other actions stay buttons.
+   */
+  rows: (ImportRowProps & { key: string })[];
 }
 
-/** Recipes on their way in. Renders nothing when there are none. */
-export function ImportList({ items, onRetry, onRemove, retryingId, title = 'Importing' }: ImportListProps) {
-  const styles = useStyles();
-  if (items.length === 0) return null;
+/** Your shares on their way in, just saved, or stuck; cards come and go smoothly. Renders nothing when there are none. */
+export function ImportList({ title, rows }: ImportListProps) {
+  if (rows.length === 0) return null;
   return (
-    <View style={styles.list}>
-      <SectionHeader title={title} />
-      {items.map((job) => (
-        <ImportRow
-          key={job.id}
-          source={job.source}
-          status={job.status}
-          error={job.error}
-          retrying={retryingId === job.id}
-          onRetry={() => onRetry(job.id)}
-          onRemove={() => onRemove(job.id)}
-        />
-      ))}
-    </View>
+    <AnimatedList gap="md">
+      <SectionHeader key="title" title={title} />
+      {rows.map(({ key, ...row }) => {
+        if (row.state !== 'failed') return <ImportRow key={key} {...row} />;
+        const remove = row.actions?.find((a) => a.key === 'remove');
+        return (
+          <ImportRow
+            key={key}
+            {...row}
+            actions={row.actions?.filter((a) => a !== remove)}
+            onDismiss={remove?.onPress}
+            dismissLabel={remove ? `Remove ${row.title}` : undefined}
+          />
+        );
+      })}
+    </AnimatedList>
   );
 }
-
-const useStyles = createStyles(() => ({
-  list: { gap: space.md },
-}));

@@ -2,6 +2,9 @@
 import {
   buildCatalogIndex,
   capitalize,
+  cleanSection,
+  isGenericName,
+  isVaguePhrase,
   matchProduct,
   normalizeText,
   parseIngredientLine,
@@ -27,11 +30,21 @@ export interface Catalog {
 }
 
 const words = (s: string): string[] => normalizeText(s).split(/[^a-z0-9]+/).filter((w) => w.length > 0);
-const phraseKey = (s: string): string => words(s).map((w) => singularize(w)).join(' ');
+/** Normalized, singularized words: "Cherry Tomatoes" and "cherry tomato" are the same phrase. */
+export const phraseKey = (s: string): string => words(s).map((w) => singularize(w)).join(' ');
 
+/**
+ * The matching catalog. A vague household product is left out with its aliases (they are the lines it
+ * swallowed: "star anise" on "Other"), so it is never matched nor offered to the model as a known name.
+ */
 export function buildCatalog(products: Product[], aliases: ProductAlias[]): Catalog {
+  const usable = products.filter((p) => !isVaguePhrase(p, p.name_en));
+  const byId = new Map(usable.map((p) => [p.id, p]));
+  const kept = aliases.filter((a) => {
+    const p = byId.get(a.product_id);
+    return p !== undefined && !isVaguePhrase(p, a.alias);
+  });
   const phrases = new Map<string, Set<string>>();
-  const known = new Set(products.map((p) => p.id));
   const add = (id: string, text: string): void => {
     const key = phraseKey(text);
     if (key === '') return;
@@ -39,9 +52,9 @@ export function buildCatalog(products: Product[], aliases: ProductAlias[]): Cata
     if (!set) phrases.set(id, (set = new Set()));
     set.add(key);
   };
-  for (const p of products) add(p.id, p.name_en);
-  for (const a of aliases) if (known.has(a.product_id)) add(a.product_id, a.alias);
-  return { index: buildCatalogIndex(products, aliases), products, phrases };
+  for (const p of usable) add(p.id, p.name_en);
+  for (const a of kept) add(a.product_id, a.alias);
+  return { index: buildCatalogIndex(usable, kept), products: usable, phrases };
 }
 
 // chile, chili and pepper name the same thing at the end of an English product name
@@ -57,27 +70,62 @@ export function isExactMatch(catalog: Catalog, product: Product, label: string):
 }
 const isExact = isExactMatch;
 
-/** English names put the noun last: "chicken stock" must not become Chicken, "white onion" may become Onion. */
+// Heads whose qualifier is the product: fish sauce is not Soy sauce, sesame oil is not Cooking oil, balsamic
+// vinegar is not Vinegar. A partial match on one of them only adds words that change nothing (NEUTRAL).
+// Broth and stock are left out on purpose: the catalog's Broth stands for every broth.
+const QUALIFIED_HEADS: ReadonlySet<string> = new Set(['sauce', 'paste', 'powder', 'seasoning', 'oil', 'vinegar']);
+const NEUTRAL: ReadonlySet<string> = new Set(
+  // Not "dark": dark soy sauce is its own bottle.
+  ['fresh', 'pure', 'plain', 'regular', 'neutral', 'light', 'low', 'reduced', 'sodium', 'organic', 'homemade',
+    'store', 'bought', 'good', 'quality', 'natural', 'distilled', 'premium'].map((w) => singularize(w)),
+);
+
+/** "light soy sauce" over "soy sauce": the phrase ends the name and only neutral words come before it. */
+function onlyNeutralBefore(name: readonly string[], phrase: readonly string[]): boolean {
+  const extra = name.length - phrase.length;
+  if (extra < 0 || phrase.some((w, i) => name[extra + i] !== w)) return false;
+  return name.slice(0, extra).every((w) => NEUTRAL.has(w));
+}
+
+/**
+ * English names put the noun last: "chicken stock" must not become Chicken, "white onion" may become Onion.
+ * For a qualified head the qualifier must not change: "fish sauce" is neither "Sauce" nor "Soy sauce".
+ */
 function sameHead(catalog: Catalog, product: Product, nameEn: string): boolean {
-  const want = head(phraseKey(nameEn));
+  const name = phraseKey(nameEn);
+  const want = head(name);
   if (want === '') return false;
-  for (const p of catalog.phrases.get(product.id) ?? []) if (head(p) === want) return true;
+  for (const p of catalog.phrases.get(product.id) ?? []) {
+    if (head(p) !== want) continue;
+    if (!QUALIFIED_HEADS.has(want) || onlyNeutralBefore(name.split(' '), p.split(' '))) return true;
+  }
   return false;
 }
 
 /**
- * Product for one ingredient: matchProduct on name_en first, then on the cleaned raw label.
- * A partial match is accepted only when it keeps the English head noun of name_en, so
- * "chicken stock" never lands on Chicken and "tomato paste" never on Tomato.
+ * The first name that says what the thing is, in order of preference (name_en, then the line's own label):
+ * "other" or "sauce" for fish sauce don't. A vague name only when nothing better is given ("2 tbsp oil").
  */
-export function matchIngredient(catalog: Catalog, nameEn: string, rawLabel: string): Product | null {
-  if (nameEn.trim() !== '') {
+export function specificName(...names: readonly string[]): string {
+  const given = names.map((n) => n.trim()).filter((n) => n !== '');
+  return given.find((n) => !isGenericName(n)) ?? given[0] ?? '';
+}
+
+/**
+ * Product for one ingredient: matchProduct on name_en first, then on the cleaned raw label. A vague name_en
+ * ("other", "sauce") gives way to the label (see specificName). A partial match is accepted only when it
+ * keeps the English head noun of that name, so "chicken stock" never lands on Chicken, "tomato paste" never
+ * on Tomato and "fish sauce" never on a sauce. Without any name_en, a partial label match is trusted.
+ */
+export function matchIngredient(catalog: Catalog, nameEnAsGiven: string, rawLabel: string): Product | null {
+  const nameEn = isGenericName(nameEnAsGiven) ? specificName(nameEnAsGiven, rawLabel) : nameEnAsGiven.trim();
+  if (nameEn !== '') {
     const p = matchProduct(catalog.index, nameEn);
     if (p && (isExact(catalog, p, nameEn) || sameHead(catalog, p, nameEn))) return p;
   }
   if (rawLabel.trim() !== '') {
     const q = matchProduct(catalog.index, rawLabel);
-    if (q && (isExact(catalog, q, rawLabel) || nameEn.trim() === '' || sameHead(catalog, q, nameEn))) return q;
+    if (q && (isExact(catalog, q, rawLabel) || nameEn === '' || sameHead(catalog, q, nameEn))) return q;
   }
   return null;
 }
@@ -127,6 +175,8 @@ export interface IngredientRow {
   unit: Unit | null;
   is_guessed: boolean;
   is_optional: boolean;
+  /** The part of the recipe it belongs to ("Marinade", "Sauce"); null for a recipe with one list. */
+  section: string | null;
 }
 
 /** A household product to create because nothing in the catalog matched. */
@@ -152,7 +202,10 @@ export interface IngredientPlan {
   newProducts: NewProduct[];
 }
 
-/** Maps every ingredient to its row; unmatched names become (deduplicated) household products. */
+/**
+ * Maps every ingredient to its row; unmatched names become (deduplicated) household products, except a
+ * vague one ("Sauce" when the line says only "sauce"), which stays a plain line.
+ */
 export function planIngredients(ingredients: readonly ExtractedIngredient[], catalog: Catalog): IngredientPlan {
   const planned: PlannedIngredient[] = [];
   const newProducts = new Map<string, NewProduct>();
@@ -160,7 +213,8 @@ export function planIngredients(ingredients: readonly ExtractedIngredient[], cat
   ingredients.forEach((ing, position) => {
     const rawText = ing.raw_text.trim();
     const rawLabel = parseIngredientLine(rawText).label;
-    const nameEn = ing.name_en.trim();
+    // What it is called when no product matches: never "Other" or "Sauce" when the line says more.
+    const nameEn = specificName(ing.name_en, rawLabel);
     const { quantity, unit } = normalizeQuantity(ing.quantity, ing.unit);
     const base = {
       position,
@@ -169,17 +223,22 @@ export function planIngredients(ingredients: readonly ExtractedIngredient[], cat
       unit,
       is_guessed: quantity !== null && ing.is_guessed,
       is_optional: ing.is_optional,
+      // Each line keeps its own: dark soy sauce in the marinade and in the sauce are two lines, one product.
+      section: cleanSection(ing.section),
     };
 
-    const product = matchIngredient(catalog, nameEn, rawLabel);
+    const product = matchIngredient(catalog, ing.name_en, rawLabel);
     if (product) {
-      planned.push({ row: { ...base, name: product.name_en, product_id: product.id }, newProductKey: null });
+      // The recipe says what the line says ("Dark soy sauce", "Red onion"); the product is only its link to
+      // the pantry and the list.
+      planned.push({ row: { ...base, name: capitalize(nameEn), product_id: product.id }, newProductKey: null });
       return;
     }
 
-    const displayName = capitalize(nameEn !== '' ? nameEn : rawLabel);
+    const displayName = capitalize(nameEn);
     const key = normalizeText(displayName);
-    if (key === '') {
+    // Nothing specific to name a product after ("2 tbsp sauce"): the line keeps its word, unlinked.
+    if (key === '' || isGenericName(displayName)) {
       planned.push({ row: { ...base, name: displayName || base.raw_text, product_id: null }, newProductKey: null });
       return;
     }
@@ -197,7 +256,7 @@ export function planIngredients(ingredients: readonly ExtractedIngredient[], cat
       newProducts.set(key, np);
     }
     for (const alias of [normalizeText(displayName), normalizeText(rawLabel)]) {
-      if (alias !== '' && /\p{L}/u.test(alias) && !np.aliases.includes(alias)) np.aliases.push(alias);
+      if (alias !== '' && /\p{L}/u.test(alias) && !isGenericName(alias) && !np.aliases.includes(alias)) np.aliases.push(alias);
     }
     planned.push({ row: { ...base, name: displayName, product_id: null }, newProductKey: key });
   });
@@ -210,6 +269,6 @@ export function resolveRows(plan: IngredientPlan, created: ReadonlyMap<string, P
   return plan.ingredients.map(({ row, newProductKey }) => {
     if (newProductKey === null) return row;
     const p = created.get(newProductKey);
-    return p ? { ...row, product_id: p.id, name: p.name_en } : row;
+    return p ? { ...row, product_id: p.id } : row;
   });
 }

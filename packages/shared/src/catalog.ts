@@ -1,5 +1,6 @@
 // Matching free-text labels ("pechugas de pollo", "Huevos (12)") to catalog products.
 import type { Product, ProductAlias } from './types';
+import { isVaguePhrase } from './generic';
 import { normalizeText, singularize } from './normalize';
 
 export interface CatalogIndex {
@@ -26,18 +27,20 @@ function words(s: string): string[] {
 
 /**
  * Indexes every alias (and each product's name_en) by its word sequence, both as written and
- * singularized, so "jitomates" finds the "jitomate" alias and vice versa.
+ * singularized, so "jitomates" finds the "jitomate" alias and vice versa. A household product named
+ * something vague ("Other", "Sauce") is left out with all its aliases, and so is a vague household alias
+ * (see generic.ts): they would swallow every line that says the word.
  */
 export function buildCatalogIndex(products: Product[], aliases: ProductAlias[]): CatalogIndex {
   const byId = new Map<string, Product>();
-  for (const p of products) byId.set(p.id, p);
+  for (const p of products) if (!isVaguePhrase(p, p.name_en)) byId.set(p.id, p);
   const phrases = new Map<string, Entry[]>();
   let maxTokens = 0;
   let order = 0;
 
   const addPhrase = (product: Product, phrase: string): void => {
     const raw = words(phrase);
-    if (raw.length === 0) return;
+    if (raw.length === 0 || isVaguePhrase(product, phrase)) return;
     maxTokens = Math.max(maxTokens, raw.length);
     const keys = new Set([raw.join(' '), raw.map((w) => singularize(w)).join(' ')]);
     for (const key of keys) {
@@ -49,7 +52,7 @@ export function buildCatalogIndex(products: Product[], aliases: ProductAlias[]):
     }
   };
 
-  for (const p of products) addPhrase(p, p.name_en);
+  for (const p of byId.values()) addPhrase(p, p.name_en);
   for (const a of aliases) {
     const p = byId.get(a.product_id);
     if (p) addPhrase(p, a.alias);

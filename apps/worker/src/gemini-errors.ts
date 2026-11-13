@@ -1,7 +1,8 @@
 // How a Gemini failure is handled: try again, move on to another model, or tell the person.
 import { ApiError } from '@google/genai';
-import { ImportError, isAbortError, MESSAGES } from './errors';
+import { ImportError, isAbortError } from './errors';
 import { ModelOutputError } from './model-output';
+import { ModelRefusedError } from './model-port';
 
 /** 408/429/5xx, network failures and unreadable JSON are worth another try. */
 export function isTransient(err: unknown): boolean {
@@ -20,6 +21,11 @@ export function isTransient(err: unknown): boolean {
 export function retryDelayMs(err: unknown, attempt: number): number {
   const base = err instanceof ApiError && err.status === 429 ? 15_000 : 3_000;
   return base * 2 ** (attempt - 1) + Math.floor(Math.random() * 1000);
+}
+
+/** A 400 that names thinking: this model does not take the thinking option (it is asked again without it). */
+export function refusesThinking(err: unknown): boolean {
+  return err instanceof ApiError && err.status === 400 && /thinking/i.test(err.message);
 }
 
 /** busy: rate limit, overload, server deadline or request timeout. gone: the model is retired or unknown. */
@@ -42,18 +48,23 @@ export function modelProblem(err: unknown, model: string, signal?: AbortSignal):
 
 /** The last model failed too: the message the person sees. */
 export function exhaustedError(err: unknown, model: string, problem: ModelProblem): ImportError {
-  if (problem === 'gone') return new ImportError(MESSAGES.aiFailed, { cause: err, detail: `gemini model ${model} unavailable` });
+  if (problem === 'gone') return new ImportError('aiFailed', { cause: err, detail: `gemini model ${model} unavailable` });
   const status = err instanceof ApiError ? `gemini ${err.status}` : 'gemini timeout';
-  return new ImportError(MESSAGES.aiBusy, { cause: err, detail: `${status} (${model})` });
+  return new ImportError('aiBusy', { cause: err, detail: `${status} (${model})` });
 }
 
-/** Any other Gemini failure as the message the person sees. */
+/**
+ * Any other Gemini failure in the port's terms (model-port.ts): busy, failed, or refused (a client error the
+ * request caused: another way in may work). Errors that are not Gemini's (a bug, the network) pass as they are.
+ */
 export function modelErrorToImportError(err: unknown): unknown {
   if (err instanceof ImportError || isAbortError(err)) return err;
   if (err instanceof ApiError) {
-    if (BUSY_STATUSES.has(err.status) && err.status !== 500) return new ImportError(MESSAGES.aiBusy, { cause: err, detail: `gemini ${err.status}` });
-    if (err.status >= 500) return new ImportError(MESSAGES.aiFailed, { cause: err, detail: `gemini ${err.status}` });
+    const detail = `gemini ${err.status}`;
+    if (BUSY_STATUSES.has(err.status) && err.status !== 500) return new ImportError('aiBusy', { cause: err, detail });
+    if (err.status >= 500) return new ImportError('aiFailed', { cause: err, detail });
+    return new ModelRefusedError({ cause: err, detail: `${detail}: ${err.message}` });
   }
-  if (err instanceof ModelOutputError) return new ImportError(MESSAGES.aiFailed, { cause: err, detail: err.message });
+  if (err instanceof ModelOutputError) return new ImportError('aiFailed', { cause: err, detail: err.message });
   return err;
 }

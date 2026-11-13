@@ -1,11 +1,10 @@
 // "Share to Mesa" from Instagram, TikTok, YouTube, Safari or Photos (expo-share-intent).
 // The native module exists only in development and store builds; in Expo Go this is inert.
-import { useRouter, useSegments } from 'expo-router';
 import { ShareIntentModule, ShareIntentProvider, useShareIntentContext } from 'expo-share-intent';
 import { useEffect, useRef, type ReactNode } from 'react';
 
 import { findUrl } from '../lib/text';
-import type { LocalImage } from './media';
+import { MAX_SCREENSHOTS, type LocalImage } from './media';
 
 export const shareAvailable = ShareIntentModule != null;
 
@@ -19,7 +18,8 @@ export function ShareProvider({ children }: { children: ReactNode }) {
 export interface IncomingShare {
   url: string | null;
   text: string | null;
-  image: LocalImage | null;
+  /** Screenshots of one recipe, in the order shared (at most 4); empty for a link or a text. */
+  images: LocalImage[];
   title: string | null;
 }
 
@@ -27,26 +27,39 @@ export interface IncomingShare {
 export function useIncomingShare(): { share: IncomingShare | null; clear: () => void } {
   const { hasShareIntent, shareIntent, resetShareIntent } = useShareIntentContext();
   if (!shareAvailable || !hasShareIntent) return { share: null, clear: () => undefined };
-  const file = shareIntent.files?.find((f) => f.mimeType?.startsWith('image/'));
+  const images = (shareIntent.files ?? [])
+    .filter((f) => f.mimeType?.startsWith('image/'))
+    .slice(0, MAX_SCREENSHOTS)
+    .map((f): LocalImage => ({ uri: f.path, width: f.width, height: f.height }));
+  const hasImages = images.length > 0;
   const url = shareIntent.webUrl ?? findUrl(shareIntent.text);
-  const text = shareIntent.text && shareIntent.text.trim() !== url ? shareIntent.text.trim() : null;
+  // With a link, the rest of the shared text is usually the post's caption: worth keeping.
+  const text = shareIntent.text ? (url ? shareIntent.text.replace(url, ' ') : shareIntent.text).replace(/\s+/g, ' ').trim() || null : null;
   const share: IncomingShare = {
-    url: file ? null : url,
-    text: file || url ? null : text,
-    image: file ? { uri: file.path, width: file.width, height: file.height } : null,
+    url: hasImages ? null : url,
+    text: hasImages ? null : text,
+    images,
     title: shareIntent.meta?.title ?? null,
   };
-  if (!share.url && !share.text && !share.image) return { share: null, clear: () => resetShareIntent() };
+  if (!share.url && !share.text && share.images.length === 0) return { share: null, clear: () => resetShareIntent() };
   return { share, clear: () => resetShareIntent() };
 }
 
+export interface ShareRedirect {
+  /** Signed in with a household, and the app can navigate. */
+  enabled: boolean;
+  /** The Import screen is up. */
+  onImport: boolean;
+  /** Brings the Import screen up. */
+  openImport: () => void;
+}
+
 /** Opens the Import screen when something is shared into the app (once signed in with a household). */
-export function useShareRedirect(enabled: boolean): void {
+export function useShareRedirect({ enabled, onImport, openImport }: ShareRedirect): void {
   const { share, clear } = useIncomingShare();
-  const router = useRouter();
-  const segments = useSegments();
   const waiting = share !== null;
-  const onImport = segments[0] === 'import';
+  const open = useRef(openImport);
+  open.current = openImport;
   // One redirect per shared item, so closing the Import screen never reopens it.
   const redirected = useRef(false);
   const wasOnImport = useRef(false);
@@ -64,7 +77,7 @@ export function useShareRedirect(enabled: boolean): void {
     }
     if (enabled && !onImport && !redirected.current) {
       redirected.current = true;
-      router.push('/import');
+      open.current();
     }
-  }, [enabled, waiting, onImport, router, clear]);
+  }, [enabled, waiting, onImport, clear]);
 }

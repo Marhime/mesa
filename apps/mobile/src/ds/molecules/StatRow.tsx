@@ -39,6 +39,6 @@ const useStyles = createStyles((t) => ({
     borderBottomWidth: border.hairline,
     borderColor: t.colors.line,
   },
-  cell: { flex: 1, minWidth: 0, alignItems: 'center', gap: border.strong },
+  cell: { flex: 1, minWidth: 0, alignItems: 'center', gap: space.xxs },
   divider: { width: border.hairline, backgroundColor: t.colors.line },
 }));

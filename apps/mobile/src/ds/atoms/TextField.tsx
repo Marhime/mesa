@@ -1,6 +1,7 @@
-import { useState, type Ref } from 'react';
+import { useId, useState, type Ref } from 'react';
 import { TextInput, View, type TextInputInstance, type TextInputProps } from 'react-native';
 
+import { KeyboardAccessoryBar, useKeyboardAccessory } from '../keyboardAccessory';
 import { createStyles, useTheme } from '../theme';
 import { border, maxFontScale, radius, size, space, typography } from '../tokens';
 import { Icon } from './Icon';
@@ -31,6 +32,9 @@ type PassThrough = Pick<
   | 'passwordRules'
 >;
 
+/** A field's handle, to move the focus to it (`ref.current?.focus()`: Return on the email goes to the password). */
+export type TextFieldRef = TextInputInstance;
+
 export interface TextFieldProps extends PassThrough {
   value: string;
   onChangeText: (text: string) => void;
@@ -49,7 +53,7 @@ export interface TextFieldProps extends PassThrough {
   hint?: string;
   /** Larger, centered text (one-time codes, invite codes). */
   code?: boolean;
-  ref?: Ref<TextInputInstance>;
+  ref?: Ref<TextFieldRef>;
 }
 
 /** Text input. Pill, 52 high; multiline variant uses radius lg. */
@@ -74,6 +78,9 @@ export function TextField({
 }: TextFieldProps) {
   const theme = useTheme();
   const styles = useStyles();
+  // The screen's footer rides on the keyboard while this field is being typed in.
+  const accessory = useKeyboardAccessory();
+  const accessoryId = useId();
   const [focused, setFocused] = useState(false);
   const [tall, setTall] = useState(false);
   const isMulti = multiline || grow;
@@ -98,6 +105,7 @@ export function TextField({
         ) : null}
         <TextInput
           ref={ref}
+          inputAccessoryViewID={accessory ? accessoryId : undefined}
           value={value}
           onChangeText={onChangeText}
           placeholder={placeholder ?? label}
@@ -141,6 +149,7 @@ export function TextField({
           </Touchable>
         ) : null}
       </View>
+      {accessory ? <KeyboardAccessoryBar id={accessoryId}>{accessory}</KeyboardAccessoryBar> : null}
       {error ? (
         <Text variant="caption" color="danger" accessibilityRole="alert">
           {error}

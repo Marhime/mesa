@@ -1,7 +1,7 @@
 import { View } from 'react-native';
 
 import { Button } from '../atoms/Button';
-import { Equalizer } from '../atoms/Equalizer';
+import { Simmer } from '../atoms/Simmer';
 import { Text } from '../atoms/Text';
 import { Banner } from '../molecules/Banner';
 import { Sheet } from '../molecules/Sheet';
@@ -10,6 +10,7 @@ import { radius, size, space } from '../tokens';
 
 export interface InviteSheetProps {
   visible: boolean;
+  /** As it is shared, in two groups of five ("ABCDE-FGHJK"). */
   code: string | null;
   loading?: boolean;
   error?: string | null;
@@ -18,7 +19,7 @@ export interface InviteSheetProps {
   onClose: () => void;
 }
 
-/** Shows the 6-character invite code, big, with the native share sheet one tap away. */
+/** Shows the invite code, big, with the native share sheet one tap away. */
 export function InviteSheet({ visible, code, loading, error, onShare, onRetry, onClose }: InviteSheetProps) {
   const styles = useStyles();
   return (
@@ -26,7 +27,7 @@ export function InviteSheet({ visible, code, loading, error, onShare, onRetry, o
       visible={visible}
       onClose={onClose}
       title="Invite your partner"
-      description="They open Mesa, choose Join, and type this code. It works for 7 days."
+      description="They install Mesa, choose Join with a code and enter this code. It works once, for 7 days, and replaces any code shared before."
       footer={
         error ? (
           <Button label="Try again" size="lg" fullWidth onPress={onRetry} />
@@ -37,10 +38,10 @@ export function InviteSheet({ visible, code, loading, error, onShare, onRetry, o
     >
       <View style={styles.codeBox}>
         {loading || (!code && !error) ? (
-          <Equalizer size="lg" accessibilityLabel="Creating a code" />
+          <Simmer size="lg" accessibilityLabel="Creating a code" />
         ) : code ? (
           <Text variant="display" align="center" selectable accessibilityLabel={`Invite code ${code.split('').join(' ')}`}>
-            {code.split('').join(' ')}
+            {code}
           </Text>
         ) : null}
       </View>

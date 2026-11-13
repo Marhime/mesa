@@ -1,10 +1,18 @@
-// Expo push to a household's phones (failed imports, scans ready to review). Errors are logged, never
-// thrown: the job update matters more.
+// Expo push to the phones of whoever asked: the transport, and the two pushes every kind can send
+// (failed, and a recipe ready). Titles come from the job kinds registry (@mesa/shared JOB_KINDS); what an
+// asked job says when ready is in ready-pushes.ts, when to send any of them in notify.ts.
+// Errors are logged, never thrown: the job update matters more.
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { jobKind, type ImportKind } from '@mesa/shared';
 import type { Logger } from './log';
 
 const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
-export const FAILURE_PUSH = { title: "Couldn't read this recipe", body: 'Send a screenshot or paste the text instead.' };
+
+/** Who gets it: the person who shared, or the whole household for jobs from before created_by. */
+export interface PushTarget {
+  householdId: string;
+  userId: string | null;
+}
 
 export interface PushMessage {
   to: string;
@@ -24,8 +32,14 @@ export function pushMessages(tokens: readonly string[], content: PushContent): P
   return tokens.map((to) => ({ to, ...content, sound: 'default' }));
 }
 
-export function failureMessages(tokens: readonly string[], jobId: string): PushMessage[] {
-  return pushMessages(tokens, { ...FAILURE_PUSH, data: { jobId } });
+/** The job's own error is the body: it already says what to do instead. */
+export function failurePush(kind: ImportKind, jobId: string, message: string): PushContent {
+  return { title: jobKind(kind).failureTitle, body: message, data: { jobId, kind } };
+}
+
+/** A recipe imported: its own title, "Ready in Recipes". */
+export function readyPush(recipeId: string, title: string): PushContent {
+  return { title: title.trim() || (jobKind('recipe').readyTitle ?? ''), body: 'Ready in Recipes', data: { recipeId } };
 }
 
 /** Tokens Expo answered with DeviceNotRegistered (tickets come back in the order sent). */
@@ -43,27 +57,24 @@ export function unregisteredTokens(tokens: readonly string[], response: unknown)
   return out;
 }
 
-export function sendFailurePush(
-  db: SupabaseClient,
-  householdId: string,
-  jobId: string,
-  log: Logger,
-  accessToken: string | null,
-): Promise<void> {
-  return sendPush(db, householdId, { ...FAILURE_PUSH, data: { jobId } }, log, accessToken);
+async function targetTokens(db: SupabaseClient, target: PushTarget): Promise<string[]> {
+  let query = db.from('push_tokens').select('token').eq('household_id', target.householdId);
+  // Tokens registered before user_id existed still count until the app registers them again.
+  if (target.userId) query = query.or(`user_id.eq.${target.userId},user_id.is.null`);
+  const { data, error } = await query;
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((r: { token: string }) => r.token).filter((t) => t.length > 0);
 }
 
 export async function sendPush(
   db: SupabaseClient,
-  householdId: string,
+  target: PushTarget,
   content: PushContent,
   log: Logger,
   accessToken: string | null,
 ): Promise<void> {
   try {
-    const { data, error } = await db.from('push_tokens').select('token').eq('household_id', householdId);
-    if (error) throw new Error(error.message);
-    const tokens = (data ?? []).map((r: { token: string }) => r.token).filter((t) => t.length > 0);
+    const tokens = await targetTokens(db, target);
     if (tokens.length === 0) return;
 
     const stale: string[] = [];

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Category, ExtractedIngredient, Product, ProductAlias } from '@mesa/shared';
 import { buildCatalog, matchIngredient, normalizeQuantity, planIngredients, resolveRows, zoneForCategory } from '../src/mapping';
-import { ingredientsFromLines } from '../src/pipeline';
+import { ingredientsFromLines } from '../src/ingredient-lines';
 import { log } from '../src/log';
 
 const product = (id: string, name_en: string, category: Category, household_id: string | null = null): Product => ({
@@ -115,9 +115,10 @@ describe('planIngredients', () => {
   const rows = plan.ingredients.map((p) => p.row);
 
   it('maps matched ingredients to catalog products with normalized quantities', () => {
-    expect(rows[0]).toEqual({ position: 0, raw_text: '2 jitomates', name: 'Tomato', product_id: 'p-tomato', quantity: 2, unit: 'unit', is_guessed: false, is_optional: false });
+    expect(rows[0]).toEqual({ position: 0, raw_text: '2 jitomates', name: 'Tomato', product_id: 'p-tomato', quantity: 2, unit: 'unit', is_guessed: false, is_optional: false, section: null });
     expect(rows[1]).toMatchObject({ name: 'Chicken breast', product_id: 'p-breast', quantity: 500, unit: 'g' });
-    expect(rows[2]).toMatchObject({ name: 'Broth', product_id: 'p-broth', quantity: 1, unit: 'cup' });
+    // The recipe keeps its own words; Broth is only the link.
+    expect(rows[2]).toMatchObject({ name: 'Chicken stock', product_id: 'p-broth', quantity: 1, unit: 'cup' });
     expect(rows[4]).toMatchObject({ name: 'Salt', product_id: 'p-salt', quantity: null, unit: null });
     expect(rows[5]).toMatchObject({ name: 'Onion', product_id: 'p-onion', quantity: 2, unit: 'unit' });
     expect(rows[9]).toMatchObject({ name: 'Ground beef', product_id: 'p-beef', quantity: 453.592, unit: 'g' });
@@ -208,6 +209,6 @@ describe('ingredientsFromLines (JSON-LD path)', () => {
     const out = await ingredientsFromLines(['1 taza de flor de jamaica'], catalog, async () => {
       throw new Error('503');
     }, log);
-    expect(out).toEqual([{ raw_text: '1 taza de flor de jamaica', name_en: 'flor de jamaica', quantity: 1, unit: 'cup', is_guessed: false, is_optional: false, category: null }]);
+    expect(out).toEqual([{ raw_text: '1 taza de flor de jamaica', name_en: 'flor de jamaica', quantity: 1, unit: 'cup', is_guessed: false, is_optional: false, category: null, section: null }]);
   });
 });

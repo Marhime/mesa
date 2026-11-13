@@ -45,7 +45,9 @@ docker compose logs -f backup
 ls -lh backups/
 ```
 
-A healthy start shows `catalog_loaded` (≈177 products) and `worker_started` with the yt-dlp version.
+A healthy start shows `catalog_loaded` (≈177 products), `worker_started` with the yt-dlp version, one
+`slot_started` per slot (lane `any` × `WORKER_CONCURRENCY`, lane `quick` × `WORKER_QUICK_SLOTS`) and
+`wake_listening` (new jobs wake idle slots at once; `wake_channel_trouble` means they wait for the poll).
 Share a recipe from the app and you should see `job_started` then `job_done` within a minute.
 Useful filters:
 

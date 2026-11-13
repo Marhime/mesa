@@ -1,4 +1,4 @@
-import type { Category } from '@mesa/shared';
+import type { Picto } from '@mesa/shared';
 
 import { Button } from '../atoms/Button';
 import { Chip } from '../atoms/Chip';
@@ -9,10 +9,10 @@ import { FoodRow } from './FoodRow';
 export interface StaplesSheetProps {
   visible: boolean;
   onClose: () => void;
-  items: { key: string; name: string; category: Category; isOut: boolean }[];
-  /** Ran out: back on the list until bought. */
+  items: { key: string; name: string; picto: Picto; isOut: boolean }[];
+  /** Ran out: back on the list until bought (the `add` haptic). */
   onOut: (key: string) => void;
-  /** Have it again. */
+  /** I have it (again): at home (the `check` haptic). */
   onBack: (key: string) => void;
 }
 
@@ -26,19 +26,18 @@ export function StaplesSheet({ visible, onClose, items, onOut, onBack }: Staples
       description="These count as at home, so recipes never add them to your list. Mark one when it runs out."
       footer={<Button label="Done" size="lg" fullWidth onPress={onClose} />}
     >
-      <ListGroup tone="sunken" inset="none" accessibilityLabel="Always at home">
+      <ListGroup tone="sunken" inset="picto" accessibilityLabel="Always at home">
         {items.map((s) => (
           <FoodRow
             key={s.key}
-            tone="sunken"
-            category={s.category}
+            picto={s.picto}
             title={s.name}
             detail={s.isOut ? 'Out · on your list' : undefined}
             trailing={
               s.isOut ? (
-                <Chip label="Got it" icon="check" accessibilityLabel={`${s.name}: have it again`} onPress={() => onBack(s.key)} />
+                <Chip label="I have it" icon="checkCircle" haptic="check" accessibilityLabel={`I have ${s.name}`} onPress={() => onBack(s.key)} />
               ) : (
-                <Chip label="Ran out" accessibilityLabel={`${s.name} ran out`} onPress={() => onOut(s.key)} />
+                <Chip label="Ran out" haptic="add" accessibilityLabel={`${s.name} ran out`} onPress={() => onOut(s.key)} />
               )
             }
           />

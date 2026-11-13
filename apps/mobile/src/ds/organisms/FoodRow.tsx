@@ -1,18 +1,21 @@
 import type { ReactNode } from 'react';
 import { View } from 'react-native';
-import type { Category } from '@mesa/shared';
+import type { Picto } from '@mesa/shared';
 
 import { FoodPicto } from '../atoms/FoodPicto';
 import { Icon } from '../atoms/Icon';
 import type { IconName } from '../atoms/icons';
 import { Text } from '../atoms/Text';
 import { Touchable } from '../atoms/Touchable';
-import { createStyles, useTheme } from '../theme';
-import { space } from '../tokens';
+import { useRowHighlight } from '../molecules/listTone';
+import { createStyles } from '../theme';
+import { size, space } from '../tokens';
 
 export interface FoodRowProps {
-  category: Category;
+  picto: Picto;
   title: string;
+  /** An ingredient's amount, in a column before the title ("1½ tbsp"): the names line up and read as a list. */
+  amount?: string;
   /** Muted line under the title ("375 g", "Used before it turned · 2 left"). */
   detail?: string;
   /** Icon before the detail (warning for a guessed amount). */
@@ -20,22 +23,27 @@ export interface FoodRowProps {
   /** End of the row: a status ("Have"), a date chip, an amount, or a small button (kept reachable on its own). */
   trailing?: ReactNode;
   onPress?: () => void;
-  /** Background the press highlight starts from (rows inside a sunken list). */
-  tone?: 'raised' | 'sunken';
   accessibilityLabel?: string;
   accessibilityHint?: string;
 }
 
-/** A food in a list: category picto, name, a muted detail, something at the end. */
-export function FoodRow({ category, title, detail, detailIcon, trailing, onPress, tone = 'raised', accessibilityLabel, accessibilityHint }: FoodRowProps) {
+/** A food in a list: its picto, name, a muted detail, something at the end. Highlights on the list's tone. */
+export function FoodRow({ picto, title, amount, detail, detailIcon, trailing, onPress, accessibilityLabel, accessibilityHint }: FoodRowProps) {
   const styles = useStyles();
-  const theme = useTheme();
+  const highlight = useRowHighlight();
   const label = accessibilityLabel ?? [title, detail].filter(Boolean).join(', ');
   const body = (
     <>
-      <FoodPicto category={category} />
+      <FoodPicto picto={picto} />
+      {amount !== undefined ? (
+        <View style={styles.amount}>
+          <Text variant="label" tabular numberOfLines={2}>
+            {amount}
+          </Text>
+        </View>
+      ) : null}
       <View style={styles.text}>
-        <Text variant="label" numberOfLines={2}>
+        <Text variant={amount !== undefined ? 'body' : 'label'} numberOfLines={2}>
           {title}
         </Text>
         {detail ? (
@@ -49,15 +57,13 @@ export function FoodRow({ category, title, detail, detailIcon, trailing, onPress
       </View>
     </>
   );
-  const sunken = tone === 'sunken';
   return (
     <View style={styles.row}>
       {onPress ? (
         <Touchable
           onPress={onPress}
           feedback="highlight"
-          highlightFrom={sunken ? theme.colors.surfaceSunken : theme.colors.surfaceRaised}
-          highlightTo={sunken ? theme.colors.line : theme.colors.surfaceSunken}
+          {...highlight}
           accessibilityLabel={label}
           accessibilityHint={accessibilityHint}
           style={styles.main}
@@ -78,6 +84,7 @@ const useStyles = createStyles(() => ({
   row: { flexDirection: 'row', alignItems: 'center' },
   main: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: space.md, paddingVertical: space.md, paddingLeft: space.lg, paddingRight: space.md },
   trailing: { paddingRight: space.lg },
-  text: { flex: 1, minWidth: 0, gap: space.xs / 2 },
+  text: { flex: 1, minWidth: 0, gap: space.xxs },
+  amount: { width: size.amountColumn },
   detail: { flexDirection: 'row', alignItems: 'center', gap: space.xs },
 }));

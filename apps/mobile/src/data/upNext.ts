@@ -1,9 +1,10 @@
 import type { Recipe, RecipeCoverage, UpNext } from '@mesa/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
-import { GROCERIES_KEY } from './groceries';
 import { useHouseholdId } from './household';
+import { UP_NEXT_KEY } from './keys';
 import { recipeImageUrl } from './recipes';
+import { refresh } from './refresh';
 import { rpc } from './rpc';
 import { must, supabase } from './supabase';
 
@@ -11,7 +12,7 @@ export interface UpNextEntry extends Pick<UpNext, 'id' | 'recipe_id' | 'servings
   recipe: Pick<Recipe, 'id' | 'title' | 'image_path' | 'servings'> | null;
 }
 
-export const UP_NEXT_KEY = ['upNext'] as const;
+export { UP_NEXT_KEY };
 const KEY = UP_NEXT_KEY;
 
 export function useUpNext() {
@@ -38,7 +39,7 @@ export interface UpNextTileView {
   status?: { icon: 'checkCircle' | 'store'; text: string; tone: 'success' | 'muted' };
 }
 
-/** Display fields for an Up next tile: is everything at home? */
+/** Display fields for an On the menu tile: is everything at home? */
 export function upNextTileData(entry: UpNextEntry, coverage: RecipeCoverage | undefined): UpNextTileView {
   return {
     title: entry.recipe?.title ?? 'Recipe',
@@ -52,7 +53,7 @@ export function upNextTileData(entry: UpNextEntry, coverage: RecipeCoverage | un
   };
 }
 
-/** "Plan it": adds the recipe to Up next and its ingredients to the list. Returns how many lines it touched. */
+/** "Plan it": puts the recipe on the menu and its ingredients to the list. Returns how many lines it touched. */
 export function usePlanRecipe() {
   const qc = useQueryClient();
   return useMutation({
@@ -64,18 +65,16 @@ export function usePlanRecipe() {
         .eq('up_next_id', upNextId);
       return { upNextId, items: count ?? 0 };
     },
-    onSettled: () => {
-      void qc.invalidateQueries({ queryKey: KEY });
-      void qc.invalidateQueries({ queryKey: GROCERIES_KEY });
-    },
+    onSettled: () => refresh(qc, 'menu'),
   });
 }
 
-/** Takes a recipe out of Up next and removes what only it had added to the list. */
+/** Takes a recipe off the menu and removes what only it had added to the list. */
 export function useUnplan() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (upNextId: string) => rpc('unplan', { p_up_next_id: upNextId }),
+    meta: { errorMessage: "Couldn't take it off the menu. Try again." },
     onMutate: async (upNextId) => {
       await qc.cancelQueries({ queryKey: KEY });
       const prev = qc.getQueryData<UpNextEntry[]>(KEY);
@@ -83,9 +82,6 @@ export function useUnplan() {
       return { prev };
     },
     onError: (_e, _v, ctx) => ctx?.prev && qc.setQueryData(KEY, ctx.prev),
-    onSettled: () => {
-      void qc.invalidateQueries({ queryKey: KEY });
-      void qc.invalidateQueries({ queryKey: GROCERIES_KEY });
-    },
+    onSettled: () => refresh(qc, 'menu'),
   });
 }

@@ -1,12 +1,10 @@
 // "Cooked!": takes the ingredients out of the pantry (cook_recipe) and keeps what it took for the Cooked screen.
-import { capitalize, formatQuantity, type Category, type CookedIngredient } from '@mesa/shared';
+import { capitalize, formatQuantity, type Category, type CookedIngredient, type Picto } from '@mesa/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
-import { GROCERIES_KEY } from './groceries';
-import { COVERAGE_KEY, PANTRY_KEY, cookedKey } from './keys';
-import { recipeKeys } from './recipes';
+import { cookedKey } from './keys';
+import { refresh } from './refresh';
 import { rpc } from './rpc';
-import { UP_NEXT_KEY } from './upNext';
 
 export interface CookedResult {
   recipeId: string;
@@ -24,11 +22,8 @@ export function useCookRecipe() {
       return { recipeId, title, items };
     },
     onSuccess: (result) => qc.setQueryData(cookedKey(result.recipeId), result),
-    onSettled: () => {
-      for (const key of [PANTRY_KEY, COVERAGE_KEY, GROCERIES_KEY, UP_NEXT_KEY, recipeKeys.list]) {
-        void qc.invalidateQueries({ queryKey: key });
-      }
-    },
+    // The pantry it used and all that is computed from it, what ran out (the list), the menu, last cooked.
+    onSettled: () => refresh(qc, 'cooked'),
   });
 }
 
@@ -47,7 +42,7 @@ export function useCookedResult(recipeId: string | undefined): CookedResult | un
 export interface CookedRowView {
   key: string;
   name: string;
-  category: Category;
+  picto: Picto;
   detail: string;
   ranOut: boolean;
   /** "−375 g", "0" when it ran out, "" when the amount is unknown. */
@@ -61,12 +56,12 @@ function leftText(item: CookedIngredient): string {
   return 'Some left';
 }
 
-/** Rows of "Taken from your pantry". Pure. */
-export function cookedRows(items: CookedIngredient[]): CookedRowView[] {
+/** Rows of "Taken from your pantry". Pure; `pictoFor` is usePictoLookup(). */
+export function cookedRows(items: CookedIngredient[], pictoFor: (productId: string, category: Category) => Picto): CookedRowView[] {
   return items.map((item) => ({
     key: item.product_id,
     name: capitalize(item.label),
-    category: item.category,
+    picto: pictoFor(item.product_id, item.category),
     ranOut: item.ran_out,
     detail: item.ran_out ? 'Ran out · added to your list' : item.saved ? `Used before it turned · ${leftText(item)}` : leftText(item),
     delta: item.ran_out ? '0' : item.used !== null && item.used > 0 ? `−${formatQuantity(item.used, item.unit) || item.used}` : '',

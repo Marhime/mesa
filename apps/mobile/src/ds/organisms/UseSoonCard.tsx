@@ -1,16 +1,16 @@
 import { View } from 'react-native';
-import type { Category } from '@mesa/shared';
+import type { Picto } from '@mesa/shared';
 
-import { FoodPicto } from '../atoms/FoodPicto';
+import { FoodPicto, pictoTint } from '../atoms/FoodPicto';
 import { Meter } from '../atoms/Meter';
 import { Text } from '../atoms/Text';
 import { Touchable } from '../atoms/Touchable';
-import { createStyles, tintColor } from '../theme';
+import { createStyles } from '../theme';
 import { radius, size, space } from '../tokens';
 
 export interface UseSoonCardProps {
   name: string;
-  category: Category;
+  picto: Picto;
   /** "Today", "2 days". */
   when: string;
   /** Today or past: the label is emphasized. */
@@ -20,8 +20,8 @@ export interface UseSoonCardProps {
   onPress?: () => void;
 }
 
-/** Food to use soon, on its category pastel: picto, name, time left, a freshness bar. */
-export function UseSoonCard({ name, category, when, urgent, freshness, onPress }: UseSoonCardProps) {
+/** Food to use soon, on its own color: picto, name, time left, a freshness bar. */
+export function UseSoonCard({ name, picto, when, urgent, freshness, onPress }: UseSoonCardProps) {
   const styles = useStyles();
   return (
     <Touchable
@@ -30,9 +30,9 @@ export function UseSoonCard({ name, category, when, urgent, freshness, onPress }
       feedback="scale"
       accessibilityLabel={`${name}, use within ${when.toLowerCase()}`}
       accessibilityHint={onPress ? 'Shows recipes that use it' : undefined}
-      style={[styles.card, { backgroundColor: tintColor(category) }]}
+      style={[styles.card, { backgroundColor: pictoTint(picto) }]}
     >
-      <FoodPicto category={category} size="md" />
+      <FoodPicto picto={picto} size="md" />
       <View style={styles.text}>
         <Text variant="label" color="onTint" numberOfLines={1}>
           {name}
@@ -48,5 +48,5 @@ export function UseSoonCard({ name, category, when, urgent, freshness, onPress }
 
 const useStyles = createStyles(() => ({
   card: { width: size.useSoonCard, gap: space.md, padding: space.lg, borderRadius: radius.lg },
-  text: { gap: space.xs / 2 },
+  text: { gap: space.xxs },
 }));

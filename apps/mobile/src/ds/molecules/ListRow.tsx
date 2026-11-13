@@ -4,8 +4,9 @@ import { View } from 'react-native';
 import { Icon } from '../atoms/Icon';
 import { Text } from '../atoms/Text';
 import { Touchable } from '../atoms/Touchable';
-import { createStyles, useTheme } from '../theme';
+import { createStyles } from '../theme';
 import { size, space, type ColorToken } from '../tokens';
+import { useRowHighlight } from './listTone';
 
 export interface ListRowProps {
   title: string;
@@ -15,13 +16,11 @@ export interface ListRowProps {
   chevron?: boolean;
   onPress?: () => void;
   titleColor?: ColorToken;
-  /** The list's background, for the press highlight (sunken lists inside sheets). */
-  tone?: 'raised' | 'sunken';
   accessibilityLabel?: string;
   accessibilityHint?: string;
 }
 
-/** Row inside a ListGroup: leading, title, subtitle, trailing, chevron. Min 56 high. */
+/** Row inside a ListGroup: leading, title, subtitle, trailing, chevron. Min 56 high; highlights on the list's tone. */
 export function ListRow({
   title,
   subtitle,
@@ -30,12 +29,11 @@ export function ListRow({
   chevron,
   onPress,
   titleColor = 'ink',
-  tone = 'raised',
   accessibilityLabel,
   accessibilityHint,
 }: ListRowProps) {
   const styles = useStyles();
-  const theme = useTheme();
+  const highlight = useRowHighlight();
   const body = (
     <>
       {leading ? <View style={styles.leading}>{leading}</View> : null}
@@ -64,8 +62,7 @@ export function ListRow({
     <Touchable
       onPress={onPress}
       feedback="highlight"
-      highlightFrom={tone === 'sunken' ? theme.colors.surfaceSunken : theme.colors.surfaceRaised}
-      highlightTo={tone === 'sunken' ? theme.colors.line : theme.colors.surfaceSunken}
+      {...highlight}
       accessibilityLabel={accessibilityLabel ?? (subtitle ? `${title}, ${subtitle}` : title)}
       accessibilityHint={accessibilityHint}
       style={styles.row}

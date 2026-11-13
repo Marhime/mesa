@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { Text as RNText, type AccessibilityRole, type TextStyle } from 'react-native';
 
 import { useTheme } from '../theme';
-import { maxFontScale, typography, type ColorToken, type TypeVariant } from '../tokens';
+import { maxFontScale, maxFontScaleChrome, typography, type ColorToken, type TypeVariant } from '../tokens';
 
 export interface TextProps {
   children: ReactNode;
@@ -17,6 +17,8 @@ export interface TextProps {
   /** Tabular figures for numbers that change (counts, steppers). */
   tabular?: boolean;
   flex?: boolean;
+  /** Text in a fixed shape (badge, sticker, tab or segment label): grows less with Dynamic Type. */
+  chrome?: boolean;
   selectable?: boolean;
   accessibilityRole?: AccessibilityRole;
   accessibilityLabel?: string;
@@ -35,6 +37,7 @@ export function Text({
   underline,
   tabular,
   flex,
+  chrome,
   selectable,
   accessibilityRole,
   accessibilityLabel,
@@ -58,7 +61,7 @@ export function Text({
     <RNText
       style={style}
       numberOfLines={numberOfLines}
-      maxFontSizeMultiplier={maxFontScale}
+      maxFontSizeMultiplier={chrome ? maxFontScaleChrome : maxFontScale}
       selectable={selectable}
       accessibilityRole={accessibilityRole ?? (variant === 'display' || variant === 'title' ? 'header' : undefined)}
       accessibilityLabel={accessibilityLabel}

@@ -263,6 +263,9 @@ export function readQuantity(tokens: string[], pos: number): QuantityRead | null
   };
 }
 
+/** "de", "of", "du"…: the word between an amount and what it measures. */
+export const isConnector = (token: string | undefined): boolean => CONNECTORS.has(norm(token));
+
 /** Skips "de", "de la", "of", "of the", "du" and turns "d'huile" into "huile". */
 export function skipConnectors(tokens: string[], pos: number): string[] {
   let i = pos;

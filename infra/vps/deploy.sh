@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Pushes this repository to the VPS and rebuilds the worker (the repo is not cloned there).
+# Pushes this repository to the VPS, rebuilds the worker (the repo is not cloned there) and restarts the
+# backup service so it runs the new backup.sh.
 #   MESA_VPS=root@1.2.3.4 infra/vps/deploy.sh
 # The server keeps its own infra/vps/.env, backups and secrets: they are never overwritten.
 set -euo pipefail
@@ -15,4 +16,4 @@ rsync -az --delete \
   --exclude 'infra/vps/backups' --exclude 'infra/vps/secrets' \
   ./ "$MESA_VPS:$DEST/"
 
-ssh "$MESA_VPS" "cd $DEST/infra/vps && docker compose up -d --build worker && sleep 8 && docker compose logs --tail 5 worker"
+ssh "$MESA_VPS" "cd $DEST/infra/vps && docker compose up -d --build worker && docker compose up -d --force-recreate backup && sleep 8 && docker compose logs --tail 5 worker && docker compose logs --tail 5 backup"

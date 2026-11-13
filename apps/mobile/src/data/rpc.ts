@@ -16,7 +16,8 @@ import { supabase } from './supabase';
 interface RpcMap {
   create_household: { args: { p_name: string }; returns: string };
   create_invite: { args: Record<string, never>; returns: string };
-  join_household: { args: { p_code: string }; returns: string };
+  /** The kitchen joined; null when the code opens none (wrong, used or expired). */
+  join_household: { args: { p_code: string }; returns: string | null };
   add_grocery_item: {
     args: {
       p_label: string;
@@ -45,10 +46,14 @@ interface RpcMap {
     args: { p_item: string; p_level: PantryLevel | null; p_zone: Zone | null; p_expires_on: string | null; p_clear_expiry: boolean };
     returns: string;
   };
+  set_pantry_quantity: { args: { p_item: string; p_quantity: number | null; p_unit: Unit | null }; returns: string };
   pantry_out: { args: { p_product: string; p_add_to_list: boolean }; returns: string | null };
   set_always_have: { args: { p_product: string; p_value: boolean }; returns: null };
   always_have_list: { args: Record<string, never>; returns: { product_id: string; name: string; category: Category; is_out: boolean }[] };
-  apply_pantry_proposal: { args: { p_proposal_id: string; p_line_ids: string[] }; returns: number };
+  apply_pantry_proposal: {
+    args: { p_proposal_id: string; p_line_ids: string[]; p_edits: { id: string; quantity: number | null; unit: Unit | null }[] };
+    returns: number;
+  };
   dismiss_pantry_proposal: { args: { p_proposal_id: string }; returns: null };
 }
 

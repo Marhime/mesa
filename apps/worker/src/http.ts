@@ -1,5 +1,7 @@
-// HTTP helpers: pages with a desktop browser User-Agent, size-limited downloads, image sniffing.
-import { ImportError, MESSAGES } from './errors';
+// HTTP helpers: pages with a desktop browser User-Agent, size-limited downloads, image sniffing. Every
+// request goes through the guarded fetch (safe-fetch.ts): a link never reaches the server's own network.
+import { ImportError } from './errors';
+import { fetchLink, isBlockedLink } from './safe-fetch';
 
 export const DESKTOP_UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36';
@@ -20,7 +22,7 @@ function withTimeout(signal: AbortSignal | undefined, ms: number): AbortSignal {
 }
 
 /** Reads a response body, aborting as soon as it passes `limit` bytes. */
-export async function readLimited(res: Response, limit: number): Promise<Buffer> {
+export async function readLimited(res: Pick<Response, 'headers' | 'body'>, limit: number): Promise<Buffer> {
   const declared = Number(res.headers.get('content-length'));
   if (Number.isFinite(declared) && declared > limit) {
     await res.body?.cancel().catch(() => undefined);
@@ -92,28 +94,33 @@ export type FetchedPage =
   | { kind: 'html'; html: string; finalUrl: string }
   | { kind: 'image'; bytes: Buffer; type: ImageType; finalUrl: string };
 
-/** GET a web page like a desktop browser would (15 s timeout). A direct image link comes back as bytes. */
+/**
+ * GET a web page like a desktop browser would (15 s timeout, redirects included). A direct image link comes
+ * back as bytes. A link (or a redirect) to the server's own network is not supported.
+ */
 export async function fetchPage(url: string, signal?: AbortSignal): Promise<FetchedPage> {
   let res: Response;
+  let finalUrl: string;
   try {
-    res = await fetch(url, {
-      redirect: 'follow',
+    ({ response: res, url: finalUrl } = await fetchLink(url, {
       signal: withTimeout(signal, PAGE_TIMEOUT_MS),
       headers: {
         'user-agent': DESKTOP_UA,
         accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-        'accept-language': 'es-MX,es;q=0.9,en-US;q=0.8,en;q=0.7',
+        // Pages answer in their own language; English for the rest of the page chrome.
+        'accept-language': 'en-US,en;q=0.9,*;q=0.5',
       },
-    });
+    }));
   } catch (err) {
     if (signal?.aborted) throw err;
-    throw new ImportError(MESSAGES.pageFailed, { cause: err, detail: 'fetch failed' });
+    if (isBlockedLink(err)) throw new ImportError('unsupportedLink', { cause: err, detail: 'blocked link' });
+    throw new ImportError('pageFailed', { cause: err, detail: 'fetch failed' });
   }
   if (!res.ok) {
     await res.body?.cancel().catch(() => undefined);
-    if (res.status === 404 || res.status === 410) throw new ImportError(MESSAGES.pageNotFound, { detail: `HTTP ${res.status}` });
-    if ([401, 403, 429, 451, 503].includes(res.status)) throw new ImportError(MESSAGES.pageBlocked, { detail: `HTTP ${res.status}` });
-    throw new ImportError(MESSAGES.pageFailed, { detail: `HTTP ${res.status}` });
+    if (res.status === 404 || res.status === 410) throw new ImportError('pageNotFound', { detail: `HTTP ${res.status}` });
+    if ([401, 403, 429, 451, 503].includes(res.status)) throw new ImportError('pageBlocked', { detail: `HTTP ${res.status}` });
+    throw new ImportError('pageFailed', { detail: `HTTP ${res.status}` });
   }
   const contentType = res.headers.get('content-type');
   let bytes: Buffer;
@@ -121,15 +128,15 @@ export async function fetchPage(url: string, signal?: AbortSignal): Promise<Fetc
     bytes = await readLimited(res, MAX_PAGE_BYTES);
   } catch (err) {
     if (signal?.aborted) throw err;
-    throw new ImportError(MESSAGES.pageFailed, { cause: err, detail: 'body' });
+    throw new ImportError('pageFailed', { cause: err, detail: 'body' });
   }
   const image = sniffImage(bytes);
-  if (image) return { kind: 'image', bytes, type: image, finalUrl: res.url || url };
+  if (image) return { kind: 'image', bytes, type: image, finalUrl };
   if (contentType && !/html|xml|text\/plain/i.test(contentType)) {
-    throw new ImportError(MESSAGES.unsupportedLink, { detail: contentType });
+    throw new ImportError('unsupportedLink', { detail: contentType });
   }
   const head = bytes.subarray(0, 4096).toString('latin1');
-  return { kind: 'html', html: decode(bytes, charsetOf(contentType, head)), finalUrl: res.url || url };
+  return { kind: 'html', html: decode(bytes, charsetOf(contentType, head)), finalUrl };
 }
 
 export interface DownloadedImage {
@@ -137,11 +144,13 @@ export interface DownloadedImage {
   type: ImageType;
 }
 
-/** Downloads an image (≤ maxBytes). Null when it fails or is not an image; never throws except on abort. */
+/**
+ * Downloads an image (≤ maxBytes). Null when it fails, is not an image or is blocked (safe-fetch.ts); never
+ * throws except on abort.
+ */
 export async function downloadImage(url: string, maxBytes: number, signal?: AbortSignal): Promise<DownloadedImage | null> {
   try {
-    const res = await fetch(url, {
-      redirect: 'follow',
+    const { response: res } = await fetchLink(url, {
       signal: withTimeout(signal, PAGE_TIMEOUT_MS),
       headers: { 'user-agent': DESKTOP_UA, accept: 'image/webp,image/jpeg,image/png,image/*;q=0.8' },
     });

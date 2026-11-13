@@ -73,3 +73,9 @@ export function formatMinutes(min: number | null): string | null {
   const m = min % 60;
   return m === 0 ? `${h} h` : `${h} h ${m} min`;
 }
+
+/** "tomato", "tomato and crema", "tomato, crema and onion". */
+export function listLine(names: string[]): string {
+  if (names.length <= 1) return names[0] ?? '';
+  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+}

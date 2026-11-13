@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import type { CatalogIndex, Category } from '@mesa/shared';
 
 import type { ResolvedGroceryItem } from '../../lib/groceryInput';
@@ -6,7 +7,6 @@ import { Chip } from '../atoms/Chip';
 import { ChipRow } from '../molecules/ChipRow';
 import { Field } from '../molecules/Field';
 import { FieldButton } from '../molecules/FieldButton';
-import { InlineNote } from '../molecules/InlineNote';
 import { Sheet } from '../molecules/Sheet';
 import { QuickAddField } from './QuickAddField';
 
@@ -18,7 +18,7 @@ export interface AddPantrySheetProps {
   catalog: CatalogIndex | null;
   /** Typed items are added at once (the field clears and stays up). */
   onTyped: (items: ResolvedGroceryItem[]) => void;
-  /** Names added by typing while the sheet is open (a toast would hide behind it). */
+  /** Names added by typing while the sheet is open: said under the field (a toast would hide behind it). */
   justAdded: string[];
   groups: { key: string; label: string; note?: string; items: { key: string; name: string; category: Category }[] }[];
   selected: ReadonlySet<string>;
@@ -27,8 +27,10 @@ export interface AddPantrySheetProps {
   addCount: number;
   onConfirm: () => void;
   loading?: boolean;
-  /** Let Mesa look instead of ticking: film a zone ("Film the fridge"), photograph a receipt. */
-  scan?: { sweepLabel: string; onSweep: () => void; onReceipt: () => void };
+  /** Let Mesa look instead of ticking: film a shelf (one chip per place), photograph a receipt. */
+  scan?: { sweeps: { key: string; label: string; onPress: () => void }[]; onReceipt: () => void };
+  /** Ticks changed since it opened. With words typed and not added yet, closing asks first. */
+  unsaved?: boolean;
 }
 
 /** Add to the pantry: type anything, or tick what is already at home, by where it lives. */
@@ -46,11 +48,17 @@ export function AddPantrySheet({
   onConfirm,
   loading,
   scan,
+  unsaved,
 }: AddPantrySheetProps) {
+  const [typing, setTyping] = useState(false);
+  useEffect(() => {
+    if (!visible) setTyping(false);
+  }, [visible]);
   return (
     <Sheet
       visible={visible}
       onClose={onClose}
+      unsaved={unsaved || typing}
       title={firstRun ? "What's already at home?" : 'Add to pantry'}
       description={
         firstRun
@@ -59,7 +67,7 @@ export function AddPantrySheet({
       }
       footer={
         <Button
-          label={addCount > 0 ? `Add ${addCount} to pantry` : 'Done'}
+          label={addCount > 0 ? `Add ${addCount} to pantry` : firstRun ? 'Save these basics' : 'Done'}
           size="lg"
           fullWidth
           loading={loading}
@@ -69,12 +77,23 @@ export function AddPantrySheet({
     >
       {scan ? (
         <>
-          <FieldButton icon="sparkle" title={scan.sweepLabel} subtitle="Mesa sees what's there and what's gone" onPress={scan.onSweep} />
-          <FieldButton icon="file" title="Scan a receipt" subtitle="Or share a screenshot of an order to Mesa" onPress={scan.onReceipt} />
+          <Field label="Let Mesa look" hint="Film a shelf: Mesa sees what's there and what's gone.">
+            <ChipRow accessibilityLabel="Film">
+              {scan.sweeps.map((s) => (
+                <Chip key={s.key} label={s.label} icon="camera" accessibilityLabel={`Film the ${s.label.toLowerCase()}`} onPress={s.onPress} />
+              ))}
+            </ChipRow>
+          </Field>
+          <FieldButton icon="receipt" title="Scan a receipt" subtitle="Or share a screenshot of an order to Mesa" onPress={scan.onReceipt} />
         </>
       ) : null}
-      <QuickAddField placeholder="Type anything: arroz, 6 huevos, frijoles…" catalog={catalog} onSubmit={onTyped} />
-      {justAdded.length > 0 ? <InlineNote icon="checkCircle" text={`Added: ${justAdded.join(', ')}`} /> : null}
+      <QuickAddField
+        placeholder="Type anything: rice, 6 eggs, beans…"
+        catalog={catalog}
+        onSubmit={onTyped}
+        onPending={setTyping}
+        confirmation={justAdded.length > 0 ? { text: `Added ${justAdded.join(', ')}` } : null}
+      />
       {groups.map((group) => (
         <Field key={group.key} label={group.label} hint={group.note}>
           <ChipRow wrap accessibilityLabel={group.label}>

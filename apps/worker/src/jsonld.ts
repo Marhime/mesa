@@ -12,6 +12,8 @@ export interface WebRecipe {
   /** Absolute image URL from the Recipe node, if any. */
   image: string | null;
   language: string | null;
+  /** The recipe's author as the page names it (JSON-LD author), if any. */
+  author: string | null;
 }
 
 export interface PageInfo {
@@ -23,6 +25,8 @@ export interface PageInfo {
   image: string | null;
   /** <html lang>, as a 2-letter code. */
   language: string | null;
+  /** og:site_name, else application-name. */
+  siteName: string | null;
   recipe: WebRecipe | null;
 }
 
@@ -187,7 +191,10 @@ export function collectSteps(v: unknown, out: string[] = [], depth = 0): string[
   return out;
 }
 
-/** recipeIngredient (or the old `ingredients`): strings, one per line; section headers dropped. */
+/**
+ * recipeIngredient (or the old `ingredients`): strings, one per line. Section headings ("For the sauce:")
+ * stay: the import reads them as the sections of the lines under them (ingredient-lines.ts).
+ */
 export function collectIngredients(v: unknown): string[] {
   const raw: string[] = [];
   const visit = (x: unknown): void => {
@@ -201,8 +208,22 @@ export function collectIngredients(v: unknown): string[] {
   visit(v);
   return raw
     .map((l) => l.replace(/^[-–•*▢□☐]\s*/, '').trim())
-    .filter((l) => l.length > 0 && !(l.endsWith(':') && !/\d/.test(l)))
+    .filter((l) => l.length > 0)
     .slice(0, 100);
+}
+
+/** author as a string, a Person / Organization, or an array of them: the first name given. */
+export function authorName(v: unknown, depth = 0): string | null {
+  if (depth > 3) return null;
+  if (typeof v === 'string') return cleanInline(v) || null;
+  if (Array.isArray(v)) {
+    for (const x of v) {
+      const name = authorName(x, depth + 1);
+      if (name) return name;
+    }
+    return null;
+  }
+  return isObject(v) ? authorName(v.name, depth + 1) : null;
 }
 
 export function recipeFromNode(node: Json, pageUrl: string, pageLanguage: string | null): WebRecipe {
@@ -215,6 +236,7 @@ export function recipeFromNode(node: Json, pageUrl: string, pageLanguage: string
     steps: collectSteps(node.recipeInstructions),
     image: pickImage(node.image, pageUrl) ?? pickImage(node.thumbnailUrl, pageUrl),
     language: langCode(node.inLanguage) ?? pageLanguage,
+    author: authorName(node.author ?? node.creator),
   };
 }
 
@@ -248,6 +270,7 @@ export function parsePage(html: string, pageUrl: string): PageInfo {
     description: meta($, 'og:description', 'description', 'twitter:description'),
     image: ogImage ? absoluteUrl(ogImage, pageUrl) : null,
     language,
+    siteName: meta($, 'og:site_name', 'application-name'),
     recipe,
   };
 }

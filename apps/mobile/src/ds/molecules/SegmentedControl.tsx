@@ -1,10 +1,12 @@
 import { View } from 'react-native';
+import Animated from 'react-native-reanimated';
 
 import { Text } from '../atoms/Text';
 import { Touchable } from '../atoms/Touchable';
 import { haptics } from '../haptics';
 import { createStyles } from '../theme';
 import { border, radius, size, space } from '../tokens';
+import { useSlidingIndicator } from '../useSlidingIndicator';
 
 export interface SegmentedControlProps<T extends string> {
   options: { value: T; label: string }[];
@@ -13,56 +15,61 @@ export interface SegmentedControlProps<T extends string> {
   accessibilityLabel: string;
 }
 
-/** Pill with 2–3 segments; the selected one is lime. */
+/** Pill with 2–4 segments; the ink pill slides to the selected one. */
 export function SegmentedControl<T extends string>({ options, value, onChange, accessibilityLabel }: SegmentedControlProps<T>) {
   const styles = useStyles();
+  const activeIndex = Math.max(0, options.findIndex((o) => o.value === value));
+  const pill = useSlidingIndicator(activeIndex);
   return (
-    <View style={styles.track} accessibilityRole="tablist" accessibilityLabel={accessibilityLabel}>
-      {options.map((o) => {
-        const selected = o.value === value;
-        return (
-          <Touchable
-            key={o.value}
-            onPress={() => {
-              if (!selected) {
-                haptics.select();
-                onChange(o.value);
-              }
-            }}
-            accessibilityRole="tab"
-            accessibilityLabel={o.label}
-            accessibilityState={{ selected }}
-            // 40 pt segment + the track's padding: the touch target reaches 48 pt.
-            hitSlop={{ top: space.xs, bottom: space.xs }}
-            style={[styles.segment, selected ? styles.selected : null]}
-          >
-            <Text variant="label" color={selected ? 'onTint' : 'ink'} align="center" numberOfLines={1}>
-              {o.label}
-            </Text>
-          </Touchable>
-        );
-      })}
+    <View style={styles.track}>
+      <View style={styles.row} accessibilityRole="tablist" accessibilityLabel={accessibilityLabel}>
+        <Animated.View style={[styles.pill, pill.indicatorStyle]} pointerEvents="none" />
+        {options.map((o, i) => {
+          const selected = i === activeIndex;
+          return (
+            <View key={o.value} style={styles.cell} onLayout={pill.onItemLayout(i)}>
+              <Touchable
+                onPress={() => {
+                  if (!selected) {
+                    haptics.select();
+                    onChange(o.value);
+                  }
+                }}
+                accessibilityRole="tab"
+                accessibilityLabel={o.label}
+                accessibilityState={{ selected }}
+                // 40 pt segment + the track's padding: the touch target reaches 48 pt.
+                hitSlop={{ top: space.xs, bottom: space.xs }}
+                style={styles.segment}
+              >
+                <Text variant="label" color={selected ? 'onSelect' : 'ink'} align="center" numberOfLines={1} chrome>
+                  {o.label}
+                </Text>
+              </Touchable>
+            </View>
+          );
+        })}
+      </View>
     </View>
   );
 }
 
 const useStyles = createStyles((t) => ({
   track: {
-    flexDirection: 'row',
     padding: space.xs,
-    gap: space.xs,
     borderRadius: radius.full,
     borderWidth: border.control,
     borderColor: t.colors.lineStrong,
     backgroundColor: t.colors.surfaceRaised,
   },
+  row: { flexDirection: 'row', gap: space.xs },
+  pill: { position: 'absolute', top: 0, left: 0, borderRadius: radius.full, backgroundColor: t.colors.select },
+  cell: { flex: 1 },
   segment: {
-    flex: 1,
     minHeight: size.touch - space.xs,
     borderRadius: radius.full,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: space.md,
   },
-  selected: { backgroundColor: t.colors.select },
 }));

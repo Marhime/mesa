@@ -1,7 +1,7 @@
 // Free-text parsing: grocery input typed like Apple Notes / pasted from WhatsApp, and recipe lines.
 import type { Unit } from './types';
-import { capitalize, normalizeText } from './normalize';
-import { norm, readQuantity, skipConnectors, tokenize } from './quantity';
+import { capitalize, normalizeText, singularize } from './normalize';
+import { isConnector, norm, readQuantity, skipConnectors, tokenize } from './quantity';
 
 export interface ParsedItem {
   label: string;
@@ -260,4 +260,30 @@ export function parseIngredientLine(line: string): ParsedItem {
     return { label: capitalize(cleanLabel(stripBullet(raw))), quantity: core.quantity, unit: core.unit, raw };
   }
   return { ...core, raw };
+}
+
+const wordsOf = (s: string): string[] => normalizeText(s).split(/[^\p{L}\p{N}]+/u).filter((w) => w.length > 0).map((w) => singularize(w));
+
+/**
+ * The measure a recipe line uses that has no unit code: "1 thumb ginger, sliced" → "thumb", "3 ramitas de
+ * cilantro" → "ramitas", "1 large thumb ginger" → "large thumb". Null when the line starts with no amount,
+ * when its unit is a known one ("2 tbsp oil"), or when the words after the amount are the ingredient
+ * itself (`name`, as stored: "2 Ginger").
+ */
+export function measureWord(line: string, name: string): string | null {
+  const { rest } = pullParentheses(stripBullet(line).replace(EMOJI, ' '));
+  const tokens = tokenize(cutPrepNote(rest.replace(/\u0000/g, ' ')).trim());
+  const lead = tokens.length > 0 ? readQuantity(tokens, 0) : null;
+  if (!lead || lead.hasUnit || !lead.hasNumber) return null;
+  const own = new Set(wordsOf(name));
+  const measure: string[] = [];
+  let i = lead.end;
+  for (; i < tokens.length && measure.length < 2; i++) {
+    const token = tokens[i]!;
+    const word = wordsOf(token);
+    if (isConnector(token) || word.length === 0 || word.some((w) => own.has(w)) || !/^\p{L}/u.test(word[0]!)) break;
+    measure.push(token.toLowerCase());
+  }
+  // Something must be left after the measure: the ingredient itself.
+  return measure.length > 0 && i < tokens.length ? measure.join(' ') : null;
 }

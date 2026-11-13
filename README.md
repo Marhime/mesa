@@ -12,7 +12,7 @@ qui doit partir vite.
 
 | Dossier | Contenu | Vérifié ici |
 | --- | --- | --- |
-| `apps/mobile` | App Expo SDK 58 (iOS), Expo Router, design system Zician dans `src/ds` | `tsc`, contrôle design system, bundle iOS (`expo export`) |
+| `apps/mobile` | App Expo SDK 58 (iOS), Expo Router, design system minimaliste dans `src/ds` | `tsc`, contrôle design system, bundle iOS (`expo export`) |
 | `apps/worker` | Service d'import pour ton VPS (Gemini, yt-dlp, schema.org) | `tsc`, 144 tests, build |
 | `packages/shared` | Saisie libre, unités, catalogue de 177 produits (EN/ES/FR) | `tsc`, 353 tests |
 | `supabase/migrations` | Schéma, RLS par foyer, fonctions, catalogue, bucket images | tests SQL sur Postgres (`pnpm test:db`) |
@@ -59,7 +59,8 @@ Clé Gemini : aistudio.google.com. Détails, mise à jour de yt-dlp et restaurat
 
 ### 4. Inviter Karla
 
-Settings → Invite → envoie-lui le code à 6 caractères. Elle se connecte et choisit « Join with a code ».
+Settings → Invite → envoie-lui le code à 10 caractères (« ABCDE-FGHJK », valable 7 jours ; un nouveau code remplace
+le précédent). Elle se connecte et choisit « Join with a code ».
 
 ## Commandes utiles
 

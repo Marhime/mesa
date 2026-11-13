@@ -4,7 +4,7 @@ import { View } from 'react-native';
 import { Text } from '../atoms/Text';
 import { Touchable } from '../atoms/Touchable';
 import { createStyles } from '../theme';
-import { border, size, space } from '../tokens';
+import { size, space } from '../tokens';
 
 export interface SectionHeaderProps {
   title: string;
@@ -54,10 +54,10 @@ export function SectionHeader({ title, subtitle, meta, action, overline, leading
 }
 
 const useStyles = createStyles(() => ({
-  row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: space.md, minHeight: size.badge },
+  row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: space.md },
   overline: { paddingHorizontal: space.xs },
   withSubtitle: { alignItems: 'flex-start' },
-  titleBlock: { flexShrink: 1, gap: border.strong },
+  titleBlock: { flexShrink: 1, gap: space.xxs },
   titleRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm, flexShrink: 1 },
   action: { minHeight: size.touch / 2, justifyContent: 'center' },
 }));

@@ -1,38 +1,40 @@
-import { View } from 'react-native';
-
-import { Banner } from '../molecules/Banner';
-import { FieldButton } from '../molecules/FieldButton';
-import { ProgressNote } from '../molecules/ProgressNote';
-import { createStyles } from '../theme';
-import { space } from '../tokens';
+import { AnimatedList } from '../molecules/AnimatedList';
+import { ImportRow } from './ImportRow';
 
 export interface ScanInboxProps {
-  /** Scans being read ("Looking through your fridge…"). */
+  /** Scans uploading or being read ("Looking through your fridge…"). */
   working: { key: string; title: string }[];
-  failed: { key: string; title: string; text: string; onDismiss: () => void }[];
+  /** Scans that couldn't be read, with a way to try again ("Film again"; null when it can't work today) and to forget them. */
+  failed: { key: string; title: string; text: string; again: { label: string; onPress: () => void } | null; onDismiss: () => void }[];
   /** Proposals waiting for review. */
   ready: { key: string; title: string; subtitle: string; onReview: () => void }[];
 }
 
-/** Fridge scans and receipts on their way, and what's ready to review. Renders nothing when empty. */
+/**
+ * Fridge scans and receipts on their way, and what's ready to review: the same cards as your shares
+ * (ImportRow), coming and going smoothly. Renders nothing when empty.
+ */
 export function ScanInbox({ working, failed, ready }: ScanInboxProps) {
-  const styles = useStyles();
   if (working.length + failed.length + ready.length === 0) return null;
   return (
-    <View style={styles.list}>
+    <AnimatedList gap="md">
       {ready.map((r) => (
-        <FieldButton key={r.key} icon="sparkle" title={r.title} subtitle={r.subtitle} action="Review" onPress={r.onReview} />
+        <ImportRow key={r.key} state="ready" icon="sparkle" title={r.title} caption={r.subtitle} openLabel="Review" onOpen={r.onReview} />
       ))}
       {working.map((w) => (
-        <ProgressNote key={w.key} text={w.title} />
+        <ImportRow key={w.key} state="working" title={w.title} />
       ))}
       {failed.map((f) => (
-        <Banner key={f.key} tone="danger" title={f.title} text={f.text} action={{ label: 'Dismiss', onPress: f.onDismiss }} />
+        <ImportRow
+          key={f.key}
+          state="failed"
+          title={f.title}
+          caption={f.text}
+          actions={f.again ? [{ key: 'again', ...f.again }] : []}
+          onDismiss={f.onDismiss}
+          dismissLabel={`Remove ${f.title}`}
+        />
       ))}
-    </View>
+    </AnimatedList>
   );
 }
-
-const useStyles = createStyles(() => ({
-  list: { gap: space.md },
-}));

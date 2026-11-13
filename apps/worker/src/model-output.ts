@@ -1,15 +1,15 @@
 // What the model must return, and the zod layer that turns sloppy JSON into an ExtractedRecipe.
-import { Type, type Schema } from '@google/genai';
+import { enumOf, nullable, Type, type ModelSchema } from './model-schema';
 import { z } from 'zod';
-import { parseIngredientLine, type Category, type ExtractedIngredient, type ExtractedRecipe } from '@mesa/shared';
+import { cleanSection, parseIngredientLine, type Category, type ExtractedIngredient, type ExtractedRecipe } from '@mesa/shared';
 import { parseDurationMinutes } from './duration';
+import { withSections } from './ingredient-sections';
 import { parseServings } from './servings';
 
 export const CATEGORIES = ['produce', 'bakery', 'meat', 'dairy', 'frozen', 'cupboard', 'drinks', 'household', 'other'] as const;
 
-const nullable = (s: Schema): Schema => ({ ...s, nullable: true });
 
-const INGREDIENT_SCHEMA: Schema = {
+const INGREDIENT_SCHEMA: ModelSchema = {
   type: Type.OBJECT,
   properties: {
     raw_text: { type: Type.STRING, description: 'The ingredient as written or said in the source, in its language.' },
@@ -18,14 +18,18 @@ const INGREDIENT_SCHEMA: Schema = {
     unit: nullable({ type: Type.STRING, description: 'Unit as written ("taza", "cda", "g"); null for plain counts.' }),
     is_guessed: { type: Type.BOOLEAN },
     is_optional: { type: Type.BOOLEAN },
-    category: nullable({ type: Type.STRING, format: 'enum', enum: [...CATEGORIES] }),
+    category: nullable(enumOf(CATEGORIES)),
+    section: nullable({
+      type: Type.STRING,
+      description: 'The part of the recipe it belongs to, as the recipe names it ("Marinade", "Sauce", "For the noodles"); null when the recipe has one list.',
+    }),
   },
-  required: ['raw_text', 'name_en', 'quantity', 'unit', 'is_guessed', 'is_optional', 'category'],
-  propertyOrdering: ['raw_text', 'name_en', 'quantity', 'unit', 'is_guessed', 'is_optional', 'category'],
+  required: ['raw_text', 'name_en', 'quantity', 'unit', 'is_guessed', 'is_optional', 'category', 'section'],
+  propertyOrdering: ['raw_text', 'name_en', 'quantity', 'unit', 'is_guessed', 'is_optional', 'category', 'section'],
 };
 
 /** responseSchema for full extraction: ExtractedRecipe + not_a_recipe (+ image_shows_dish for photos). */
-export const RECIPE_RESPONSE_SCHEMA: Schema = {
+export const RECIPE_RESPONSE_SCHEMA: ModelSchema = {
   type: Type.OBJECT,
   properties: {
     not_a_recipe: { type: Type.BOOLEAN },
@@ -35,14 +39,19 @@ export const RECIPE_RESPONSE_SCHEMA: Schema = {
     language: nullable({ type: Type.STRING, description: 'ISO 639-1 code of the source language.' }),
     ingredients: { type: Type.ARRAY, items: INGREDIENT_SCHEMA },
     steps: { type: Type.ARRAY, items: { type: Type.STRING } },
+    step_starts: nullable({
+      type: Type.ARRAY,
+      items: nullable({ type: Type.INTEGER }),
+      description: 'Video only: the second each step starts, same order and length as steps.',
+    }),
     image_shows_dish: nullable({ type: Type.BOOLEAN, description: 'True when a provided image shows the finished dish.' }),
   },
   required: ['not_a_recipe', 'title', 'servings', 'total_minutes', 'language', 'ingredients', 'steps'],
-  propertyOrdering: ['not_a_recipe', 'title', 'servings', 'total_minutes', 'language', 'ingredients', 'steps', 'image_shows_dish'],
+  propertyOrdering: ['not_a_recipe', 'title', 'servings', 'total_minutes', 'language', 'ingredients', 'steps', 'step_starts', 'image_shows_dish'],
 };
 
 /** responseSchema for the small batched name translation used with JSON-LD recipes. */
-export const TRANSLATION_RESPONSE_SCHEMA: Schema = {
+export const TRANSLATION_RESPONSE_SCHEMA: ModelSchema = {
   type: Type.OBJECT,
   properties: {
     items: {
@@ -52,7 +61,7 @@ export const TRANSLATION_RESPONSE_SCHEMA: Schema = {
         properties: {
           i: { type: Type.INTEGER },
           name_en: { type: Type.STRING },
-          category: nullable({ type: Type.STRING, format: 'enum', enum: [...CATEGORIES] }),
+          category: nullable(enumOf(CATEGORIES)),
           is_optional: { type: Type.BOOLEAN },
         },
         required: ['i', 'name_en', 'category', 'is_optional'],
@@ -189,6 +198,7 @@ const IngredientSchema = z.object({
   is_guessed: zBool,
   is_optional: zBool,
   category: z.preprocess(toCategory, z.enum(CATEGORIES).nullable()),
+  section: z.preprocess((v) => cleanSection(toNullableText(v)), z.string().nullable()),
 });
 
 const OutputSchema = z.object({
@@ -234,6 +244,7 @@ export function normalizeIngredient(raw: unknown): ExtractedIngredient | null {
     is_guessed: quantity !== null && ing.is_guessed,
     is_optional: ing.is_optional,
     category: ing.category,
+    section: ing.section,
   };
 }
 
@@ -255,7 +266,9 @@ export function normalizeModelOutput(raw: unknown): ModelOutcome {
   const out = parsed.data;
   if (out.not_a_recipe) return { kind: 'not_recipe' };
 
-  const ingredients = out.ingredients.map(normalizeIngredient).filter((i): i is ExtractedIngredient => i !== null);
+  const ingredients = withSections(out.ingredients.map(normalizeIngredient).filter((i): i is ExtractedIngredient => i !== null));
+  const rawSteps = (obj as { steps?: unknown }).steps;
+  const starts = toStepStarts((obj as { step_starts?: unknown }).step_starts, Array.isArray(rawSteps) ? rawSteps.length : -1, out.steps.length);
   return {
     kind: 'recipe',
     imageShowsDish: out.image_shows_dish,
@@ -265,9 +278,23 @@ export function normalizeModelOutput(raw: unknown): ModelOutcome {
       total_minutes: out.total_minutes,
       ingredients,
       steps: out.steps,
+      ...(starts ? { step_starts: starts } : {}),
       language: out.language,
     },
   };
+}
+
+/**
+ * Seconds where each step starts in the video, or null when they can't be trusted: one per step (and no
+ * step was dropped while cleaning), whole seconds, never going back in time.
+ */
+export function toStepStarts(raw: unknown, rawStepCount: number, stepCount: number): (number | null)[] | null {
+  if (!Array.isArray(raw) || raw.length !== stepCount || rawStepCount !== stepCount || stepCount === 0) return null;
+  const starts = raw.map((v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 && v < 4 * 3600 ? Math.floor(v) : null));
+  const known = starts.filter((v): v is number => v !== null);
+  if (known.length === 0) return null;
+  for (let i = 1; i < known.length; i++) if (known[i]! < known[i - 1]!) return null;
+  return starts;
 }
 
 export interface Translation {

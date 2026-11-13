@@ -2,8 +2,8 @@ import type { ConfigContext, ExpoConfig } from 'expo/config';
 
 // Splash and root background = the `surface` token (src/ds/tokens.ts). The config loader cannot
 // import TypeScript modules, so the values are repeated here; scripts/check-ds.mjs fails if they drift.
-const SURFACE_LIGHT = '#f3f1ea';
-const SURFACE_DARK = '#111016';
+const SURFACE_LIGHT = '#f6f6f4';
+const SURFACE_DARK = '#0e0e0e';
 
 // The app's identity on the App Store (MESA_IOS_BUNDLE_ID overrides it, e.g. for a second build).
 const IOS_BUNDLE_ID = process.env.MESA_IOS_BUNDLE_ID ?? 'com.marhime.mesa';
@@ -16,6 +16,10 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   slug: 'mesa',
   scheme: 'mesa',
   version: '1.0.0',
+  // Over-the-air updates (EAS Update): JS and assets reach installed builds without a new build, as long as
+  // the native side is the same (fingerprint). A new native module or permission still needs a build.
+  runtimeVersion: { policy: 'fingerprint' },
+  ...(EAS_PROJECT_ID ? { updates: { url: `https://u.expo.dev/${EAS_PROJECT_ID}`, checkAutomatically: 'ON_LOAD', fallbackToCacheTimeout: 0 } } : {}),
   orientation: 'portrait',
   icon: './assets/images/icon.png',
   platforms: ['ios', 'android'],
@@ -62,7 +66,8 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
         iosActivationRules: {
           NSExtensionActivationSupportsWebURLWithMaxCount: 1,
           NSExtensionActivationSupportsWebPageWithMaxCount: 1,
-          NSExtensionActivationSupportsImageWithMaxCount: 1,
+          // Up to 4 screenshots of one recipe (src/data/media.ts MAX_SCREENSHOTS).
+          NSExtensionActivationSupportsImageWithMaxCount: 4,
           NSExtensionActivationSupportsText: true,
         },
         // Shown in the iOS share sheet. Must differ from the app name (it also names the Xcode target).

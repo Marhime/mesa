@@ -1,4 +1,4 @@
-// Units: parsing free-text units (en/es/fr), scaling, shopping rounding and display.
+// Units: parsing free-text units (en/es/fr), scaling and shopping rounding. Display lives in format.ts.
 import type { Unit, UnitFamily } from './types';
 import { normalizeText } from './normalize';
 
@@ -146,67 +146,4 @@ export function roundForShopping(q: number | null, unit: Unit | null): number | 
     return Math.ceil(roundTo(q, 9)) + 0; // + 0 turns -0 into 0
   }
   return roundTo(q, 2) + 0;
-}
-
-/** Number without trailing zeros, at most `decimals` places: 1.50 → "1.5", 2 → "2". */
-export function formatNumber(n: number, decimals = 2): string {
-  return String(roundTo(n, decimals) + 0);
-}
-
-const FRACTION_GLYPHS: Array<[number, string]> = [
-  [0.25, '¼'],
-  [1 / 3, '⅓'],
-  [0.5, '½'],
-  [2 / 3, '⅔'],
-  [0.75, '¾'],
-];
-
-/** 1.5 → "1½", 0.25 → "¼", 0.6 → "0.6" (only quarters, halves and thirds become glyphs). */
-function formatKitchenNumber(q: number): string {
-  const whole = Math.floor(q + 1e-9);
-  const frac = q - whole;
-  if (frac < 0.01) return String(whole);
-  for (const [value, glyph] of FRACTION_GLYPHS) {
-    if (Math.abs(frac - value) < 0.01) return whole === 0 ? glyph : `${whole}${glyph}`;
-  }
-  return formatNumber(q);
-}
-
-const UNIT_LABEL: Record<Exclude<Unit, 'g' | 'ml' | 'unit'>, [string, string]> = {
-  tbsp: ['tbsp', 'tbsp'],
-  tsp: ['tsp', 'tsp'],
-  cup: ['cup', 'cups'],
-  can: ['can', 'cans'],
-  bunch: ['bunch', 'bunches'],
-  pack: ['pack', 'packs'],
-  clove: ['clove', 'cloves'],
-  pinch: ['pinch', 'pinches'],
-  slice: ['slice', 'slices'],
-};
-
-/**
- * Display text for a quantity: "500 g", "1.5 kg", "250 ml", "1.5 L", "2" (unit), "2 tbsp",
- * "½ cup", "1½ cups", "2 cans", "" when the quantity is null.
- */
-export function formatQuantity(q: number | null, unit: Unit | null): string {
-  if (q === null || !Number.isFinite(q)) return '';
-  switch (unit) {
-    case null:
-    case 'unit':
-      return formatNumber(q);
-    case 'g':
-      return q >= 1000 ? `${formatNumber(q / 1000)} kg` : `${formatNumber(q)} g`;
-    case 'ml':
-      return q >= 1000 ? `${formatNumber(q / 1000)} L` : `${formatNumber(q)} ml`;
-    case 'cup':
-    case 'tbsp':
-    case 'tsp': {
-      const [one, many] = UNIT_LABEL[unit];
-      return `${formatKitchenNumber(q)} ${q > 1 ? many : one}`;
-    }
-    default: {
-      const [one, many] = UNIT_LABEL[unit];
-      return `${formatNumber(q)} ${q > 1 ? many : one}`;
-    }
-  }
 }

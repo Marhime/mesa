@@ -1,9 +1,26 @@
-// Gemini calls: full extraction, batched name translation, and video uploads through the Files API.
-import { ApiError, FileState, type GoogleGenAI, type Part, type Schema } from '@google/genai';
-import { ImportError, MESSAGES } from './errors';
-import { exhaustedError, isTransient, modelErrorToImportError, modelProblem, retryDelayMs } from './gemini-errors';
+// The model port (model-port.ts) on Gemini: full extraction, batched name translation, any structured
+// answer, and video uploads through the Files API. A request may ask for less thinking, or be streamed
+// (Ask Mesa shows its answer as it is written). Every method keeps the port's error contract. Every call
+// is checked against the day's AI budget first (ai-budget.ts) and recorded in it once answered; one
+// request's paid tries are capped (request-tries.ts).
+import {
+  ApiError,
+  FileState,
+  ThinkingLevel,
+  Type as GeminiType,
+  type GenerateContentParameters,
+  type GenerateContentResponse,
+  type GenerateContentResponseUsageMetadata,
+  type GoogleGenAI,
+  type Schema,
+} from '@google/genai';
+import type { AiBudget, AiUsage } from './ai-budget';
+import { ImportError } from './errors';
+import { exhaustedError, isTransient, modelErrorToImportError, modelProblem, refusesThinking, retryDelayMs } from './gemini-errors';
 import type { Logger } from './log';
 import type { ModelChain } from './model-chain';
+import type { JsonRequest, ModelPart, ModelPort, Thinking, UploadedFile } from './model-port';
+import type { ModelSchema, SchemaType } from './model-schema';
 import {
   type ModelOutcome,
   normalizeModelOutput,
@@ -14,6 +31,7 @@ import {
   type Translation,
 } from './model-output';
 import { recipeSystemPrompt, translationSystemPrompt, translationUserPrompt } from './prompts';
+import { RequestTries } from './request-tries';
 import { sleep, withRetry } from './retry';
 
 const REQUEST_TIMEOUT_MS = 240_000;
@@ -26,23 +44,69 @@ const ATTEMPTS_LAST_MODEL = 3;
 /** The part of the Gemini SDK the worker uses (a fake in tests). */
 export type GeminiClient = Pick<GoogleGenAI, 'models' | 'files'>;
 
-export interface JsonRequest {
-  parts: Part[];
-  systemInstruction: string;
-  schema: Schema;
+const THINKING_LEVEL: Record<Thinking, ThinkingLevel> = {
+  minimal: ThinkingLevel.MINIMAL,
+  low: ThinkingLevel.LOW,
+  medium: ThinkingLevel.MEDIUM,
+  high: ThinkingLevel.HIGH,
+};
+
+export type { JsonRequest, Thinking, UploadedFile } from './model-port';
+
+const GEMINI_TYPE: Record<SchemaType, GeminiType> = {
+  object: GeminiType.OBJECT,
+  array: GeminiType.ARRAY,
+  string: GeminiType.STRING,
+  integer: GeminiType.INTEGER,
+  number: GeminiType.NUMBER,
+  boolean: GeminiType.BOOLEAN,
+};
+
+/** A ModelSchema in Gemini's own terms (its OpenAPI subset). */
+export function geminiSchema(s: ModelSchema): Schema {
+  const { type, properties, items, ...rest } = s;
+  return {
+    ...rest,
+    type: GEMINI_TYPE[type],
+    ...(properties ? { properties: Object.fromEntries(Object.entries(properties).map(([k, v]) => [k, geminiSchema(v)])) } : {}),
+    ...(items ? { items: geminiSchema(items) } : {}),
+  };
 }
 
-export interface UploadedFile {
-  name: string;
-  uri: string;
-  mimeType: string;
+/** One call's answer, streamed or not. */
+interface Answer {
+  text: string | undefined;
+  finish: string | undefined;
+  blocked: string | undefined;
+  usage: GenerateContentResponseUsageMetadata | undefined;
+  /** Streamed: when the first text came. */
+  firstTextMs?: number;
 }
 
-export class RecipeAI {
+/** What an answered call spent: the prompt in, the answer and its thinking out. */
+const usageOf = (usage: GenerateContentResponseUsageMetadata | undefined): AiUsage => ({
+  inputTokens: usage?.promptTokenCount ?? 0,
+  outputTokens: (usage?.candidatesTokenCount ?? 0) + (usage?.thoughtsTokenCount ?? 0),
+});
+
+const whole = (res: GenerateContentResponse): Answer => ({
+  text: res.text,
+  finish: res.candidates?.[0]?.finishReason,
+  blocked: res.promptFeedback?.blockReason,
+  usage: res.usageMetadata,
+});
+
+const BLOCKED_FINISH = new Set(['SAFETY', 'PROHIBITED_CONTENT', 'BLOCKLIST', 'SPII', 'RECITATION', 'IMAGE_SAFETY']);
+
+export class RecipeAI implements ModelPort {
+  /** Models that refused the thinking option: asked without it from then on. */
+  private readonly noThinking = new Set<string>();
+
   constructor(
     private readonly ai: GeminiClient,
     private readonly chain: ModelChain,
     private readonly log: Logger,
+    private readonly budget: AiBudget,
   ) {}
 
   /**
@@ -69,21 +133,23 @@ export class RecipeAI {
 
   /**
    * One JSON answer, from the first model that can give it. A busy or retired model hands over to the
-   * next one at once; the last model left is retried with backoff.
+   * next one at once; the last model left is retried with backoff; no try once the request's paid ones are
+   * used up. The day's ceiling (aiDailyLimit) is never retried and never handed to another model.
    */
   private async generateJson(request: JsonRequest, signal: AbortSignal | undefined, what: string): Promise<unknown> {
     const order = this.chain.order();
-    if (order.length === 0) throw new ImportError(MESSAGES.aiFailed, { detail: 'no gemini model available' });
+    if (order.length === 0) throw new ImportError('aiFailed', { detail: 'no gemini model available' });
+    const tries = new RequestTries();
     for (const [i, model] of order.entries()) {
       const last = i === order.length - 1;
       try {
-        const json = await withRetry(() => this.callModel(model, request, signal, what), {
+        const json = await withRetry(() => this.callModel(model, request, signal, what, tries), {
           signal,
           log: this.log,
           what,
           fields: { model },
           attempts: last ? ATTEMPTS_LAST_MODEL : ATTEMPTS_PER_MODEL,
-          retryable: (err) => isTransient(err) && (last || modelProblem(err, model, signal) === null),
+          retryable: (err) => isTransient(err) && (last || modelProblem(err, model, signal) === null) && tries.mayRetry(err),
           delayMs: retryDelayMs,
         });
         this.chain.markHealthy(model);
@@ -97,45 +163,99 @@ export class RecipeAI {
         } else {
           this.chain.markBusy(model);
         }
-        if (last) throw exhaustedError(err, model, problem);
+        if (last || tries.spent) throw exhaustedError(err, model, problem);
         this.log.warn('gemini_fallback', { what, from: model, to: order[i + 1], reason: problem, err });
       }
     }
     throw new Error('unreachable: the model loop always returns or throws');
   }
 
-  private async callModel(model: string, request: JsonRequest, signal: AbortSignal | undefined, what: string): Promise<unknown> {
+  /** One try on one model. A model that refuses the thinking option is asked again at once without it. */
+  private async callModel(model: string, request: JsonRequest, signal: AbortSignal | undefined, what: string, tries: RequestTries): Promise<unknown> {
+    const thinking = request.thinking !== undefined && !this.noThinking.has(model) ? request.thinking : undefined;
+    try {
+      return await this.callOnce(model, request, thinking, signal, what, tries);
+    } catch (err) {
+      if (thinking === undefined || !refusesThinking(err)) throw err;
+      this.noThinking.add(model);
+      this.log.warn('gemini_thinking_refused', { what, model, thinking, err });
+      return this.callOnce(model, request, undefined, signal, what, tries);
+    }
+  }
+
+  private async callOnce(
+    model: string,
+    request: JsonRequest,
+    thinking: Thinking | undefined,
+    signal: AbortSignal | undefined,
+    what: string,
+    tries: RequestTries,
+  ): Promise<unknown> {
+    this.budget.check();
     const started = Date.now();
-    const res = await this.ai.models.generateContent({
+    const params: GenerateContentParameters = {
       model,
       contents: [{ role: 'user', parts: request.parts }],
       config: {
         systemInstruction: request.systemInstruction,
         responseMimeType: 'application/json',
-        responseSchema: request.schema,
+        responseSchema: geminiSchema(request.schema),
         temperature: 0.1,
+        ...(thinking ? { thinkingConfig: { thinkingLevel: THINKING_LEVEL[thinking] } } : {}),
         abortSignal: signal,
         httpOptions: { timeout: REQUEST_TIMEOUT_MS },
       },
-    });
-    const candidate = res.candidates?.[0];
-    this.log.info('gemini_call', {
-      what,
-      model,
-      ms: Date.now() - started,
-      finish: candidate?.finishReason,
-      prompt_tokens: res.usageMetadata?.promptTokenCount,
-      output_tokens: res.usageMetadata?.candidatesTokenCount,
-      thoughts_tokens: res.usageMetadata?.thoughtsTokenCount,
-    });
-    if (res.promptFeedback?.blockReason) {
-      throw new ImportError(MESSAGES.aiBlocked, { detail: `blocked: ${res.promptFeedback.blockReason}` });
+    };
+    const onText = request.onText;
+    try {
+      const res = onText ? await this.streamed(params, onText, started) : whole(await this.ai.models.generateContent(params));
+      // Answered: paid for, whatever comes of it (blocked, unreadable).
+      tries.answered();
+      this.budget.record(usageOf(res.usage));
+      this.log.info('gemini_call', {
+        what,
+        model,
+        ms: Date.now() - started,
+        ...(onText ? { stream: true, first_text_ms: res.firstTextMs } : {}),
+        ...(thinking ? { thinking } : {}),
+        finish: res.finish,
+        prompt_tokens: res.usage?.promptTokenCount,
+        output_tokens: res.usage?.candidatesTokenCount,
+        thoughts_tokens: res.usage?.thoughtsTokenCount,
+      });
+      if (res.blocked) throw new ImportError('aiBlocked', { detail: `blocked: ${res.blocked}` });
+      if (res.finish && BLOCKED_FINISH.has(res.finish)) throw new ImportError('aiBlocked', { detail: `finish: ${res.finish}` });
+      return parseModelJson(res.text);
+    } catch (err) {
+      if (onText) this.hear(onText, '');
+      throw err;
     }
-    const finish = candidate?.finishReason;
-    if (finish && ['SAFETY', 'PROHIBITED_CONTENT', 'BLOCKLIST', 'SPII', 'RECITATION', 'IMAGE_SAFETY'].includes(finish)) {
-      throw new ImportError(MESSAGES.aiBlocked, { detail: `finish: ${finish}` });
+  }
+
+  /** The streamed answer, gathered; onText hears the text so far after each piece. */
+  private async streamed(params: GenerateContentParameters, onText: (soFar: string) => void, started: number): Promise<Answer> {
+    const stream = await this.ai.models.generateContentStream(params);
+    const res: Answer = { text: undefined, finish: undefined, blocked: undefined, usage: undefined };
+    for await (const chunk of stream) {
+      res.blocked ??= chunk.promptFeedback?.blockReason;
+      res.finish = chunk.candidates?.[0]?.finishReason ?? res.finish;
+      res.usage = chunk.usageMetadata ?? res.usage;
+      const piece = chunk.text;
+      if (!piece) continue;
+      res.firstTextMs ??= Date.now() - started;
+      res.text = (res.text ?? '') + piece;
+      this.hear(onText, res.text);
     }
-    return parseModelJson(res.text);
+    return res;
+  }
+
+  /** What the listener does with the text never fails the call. */
+  private hear(onText: (soFar: string) => void, text: string): void {
+    try {
+      onText(text);
+    } catch (err) {
+      this.log.warn('gemini_on_text_failed', { err });
+    }
   }
 
   /** Any structured answer (sweeps, receipts); failures come back as the message the person sees. */
@@ -148,7 +268,7 @@ export class RecipeAI {
   }
 
   /** Full extraction from media and/or text parts. */
-  async extractRecipe(parts: Part[], knownProducts: readonly string[], signal?: AbortSignal): Promise<ModelOutcome> {
+  async extractRecipe(parts: ModelPart[], knownProducts: readonly string[], signal?: AbortSignal): Promise<ModelOutcome> {
     try {
       const json = await this.generateJson({ parts, systemInstruction: recipeSystemPrompt(knownProducts), schema: RECIPE_RESPONSE_SCHEMA }, signal, 'extract');
       return normalizeModelOutput(json);
@@ -164,29 +284,43 @@ export class RecipeAI {
     signal?: AbortSignal,
   ): Promise<Map<number, Translation>> {
     if (lines.length === 0) return new Map();
-    const json = await this.generateJson(
-      { parts: [{ text: translationUserPrompt(lines) }], systemInstruction: translationSystemPrompt(knownProducts), schema: TRANSLATION_RESPONSE_SCHEMA },
-      signal,
-      'translate',
-    );
-    return normalizeTranslations(json);
+    try {
+      const json = await this.generateJson(
+        { parts: [{ text: translationUserPrompt(lines) }], systemInstruction: translationSystemPrompt(knownProducts), schema: TRANSLATION_RESPONSE_SCHEMA },
+        signal,
+        'translate',
+      );
+      return normalizeTranslations(json);
+    } catch (err) {
+      throw modelErrorToImportError(err);
+    }
   }
 
   /** Uploads a local video and waits until Gemini has processed it (state ACTIVE). */
   async uploadFile(path: string, mimeType: string, signal?: AbortSignal): Promise<UploadedFile> {
+    try {
+      return await this.upload(path, mimeType, signal);
+    } catch (err) {
+      throw modelErrorToImportError(err);
+    }
+  }
+
+  private async upload(path: string, mimeType: string, signal?: AbortSignal): Promise<UploadedFile> {
+    // A video uploaded past the day's ceiling could not be watched anyway.
+    this.budget.check();
     const started = Date.now();
     const retry = { signal, log: this.log, attempts: 2, retryable: isTransient, delayMs: retryDelayMs };
     let file = await withRetry(() => this.ai.files.upload({ file: path, config: { mimeType, abortSignal: signal } }), { ...retry, what: 'upload' });
-    if (!file.name) throw new Error('Gemini upload returned no file name');
+    if (!file.name) throw new ImportError('aiFailed', { detail: 'gemini upload returned no file name' });
     const name = file.name;
     try {
       while (file.state === FileState.PROCESSING || file.state === undefined || file.state === FileState.STATE_UNSPECIFIED) {
-        if (Date.now() - started > FILE_ACTIVE_TIMEOUT_MS) throw new ImportError(MESSAGES.timeout, { detail: 'gemini file processing' });
+        if (Date.now() - started > FILE_ACTIVE_TIMEOUT_MS) throw new ImportError('timeout', { detail: 'gemini file processing' });
         await sleep(FILE_POLL_MS, signal);
         file = await withRetry(() => this.ai.files.get({ name, config: { abortSignal: signal } }), { ...retry, what: 'file_status' });
       }
       if (file.state !== FileState.ACTIVE || !file.uri) {
-        throw new ImportError(MESSAGES.videoFailed, { detail: `gemini file state ${file.state ?? 'unknown'}: ${file.error?.message ?? ''}` });
+        throw new ImportError('videoFailed', { detail: `gemini file state ${file.state ?? 'unknown'}: ${file.error?.message ?? ''}` });
       }
     } catch (err) {
       await this.deleteFile(name);

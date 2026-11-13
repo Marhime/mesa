@@ -1,22 +1,30 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 
-import { friendlyError, isCancelled, useAppleAvailable, useAppleSignIn, usePasswordAuth, type PasswordMode } from '@/data';
-import { AppleButton, Banner, Button, Screen, Stack, Text, TextField } from '@/ds';
+import { friendlyError, isCancelled, isConfirmEmailPending, useAppleAvailable, useAppleSignIn, usePasswordAuth, type PasswordMode } from '@/data';
+import { AppleButton, Banner, Button, Screen, Stack, Text, TextField, type TextFieldRef } from '@/ds';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MIN_PASSWORD = 6;
 
 export default function SignInScreen() {
-  const [mode, setMode] = useState<PasswordMode>('signIn');
+  // Most people opening a fresh install are new: start with the account they need to create.
+  const [mode, setMode] = useState<PasswordMode>('signUp');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  // Return on the email goes on to the password, keyboard up.
+  const passwordField = useRef<TextFieldRef>(null);
   const auth = usePasswordAuth();
   const apple = useAppleSignIn();
   const appleAvailable = useAppleAvailable();
 
   const canSubmit = EMAIL_RE.test(email.trim()) && password.length >= MIN_PASSWORD;
   const submit = () => {
-    if (canSubmit) auth.mutate({ email, password, mode });
+    if (!canSubmit) return;
+    auth.mutate(
+      { email, password, mode },
+      // The account exists; once the email link is tapped, signing in is the next step.
+      { onError: (e) => isConfirmEmailPending(e) && setMode('signIn') },
+    );
   };
   const switchMode = () => {
     setMode(mode === 'signIn' ? 'signUp' : 'signIn');
@@ -25,6 +33,7 @@ export default function SignInScreen() {
 
   const rawError = auth.error ?? apple.error;
   const error = rawError && !isCancelled(rawError) ? friendlyError(rawError) : null;
+  const checkInbox = isConfirmEmailPending(rawError);
   const signingUp = mode === 'signUp';
 
   return (
@@ -52,8 +61,11 @@ export default function SignInScreen() {
           autoComplete="email"
           textContentType={signingUp ? 'username' : 'emailAddress'}
           returnKeyType="next"
+          submitBehavior="submit"
+          onSubmitEditing={() => passwordField.current?.focus()}
         />
         <TextField
+          ref={passwordField}
           label="Password"
           placeholder={signingUp ? `At least ${MIN_PASSWORD} characters` : 'Password'}
           icon="lock"
@@ -77,12 +89,14 @@ export default function SignInScreen() {
         />
         <Button
           label={signingUp ? 'I already have an account' : 'New here? Create an account'}
-          variant="ghost"
+          variant="secondary"
+          size="lg"
+          fullWidth
           onPress={switchMode}
         />
       </Stack>
 
-      {error ? <Banner tone="danger" text={error} /> : null}
+      {error ? <Banner tone={checkInbox ? 'warning' : 'danger'} title={checkInbox ? 'Check your inbox' : undefined} text={error} /> : null}
 
       {appleAvailable ? (
         <Stack gap="md">

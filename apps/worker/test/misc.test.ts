@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { fetchAllPages } from '../src/catalog-store';
 import { ConfigError, loadConfig } from '../src/config';
 import { sniffImage } from '../src/http';
-import { failureMessages, unregisteredTokens } from '../src/push';
-import { parseYtDlpInfo, ytDlpErrorMessage } from '../src/ytdlp';
+import { failurePush, pushMessages, readyPush, unregisteredTokens } from '../src/push';
+import { parseYtDlpInfo, ytDlpErrorCode } from '../src/ytdlp';
 import { MESSAGES } from '../src/errors';
 
 const env = {
@@ -24,15 +24,33 @@ describe('loadConfig', () => {
       ytdlpPath: 'yt-dlp',
       ytdlpCookies: null,
       concurrency: 1,
+      quickSlots: 1,
       logLevel: 'info',
       expoAccessToken: null,
+      healthcheckUrl: null,
+      aiDailyTokenLimit: 20_000_000,
+      aiDailyCallLimit: 3000,
+      serverJobGapMs: 30_000,
     });
+  });
+
+  it('reads the daily AI ceiling, and refuses one that is not a whole number above 0', () => {
+    expect(loadConfig({ ...env, AI_DAILY_TOKEN_LIMIT: '5000000', AI_DAILY_CALL_LIMIT: ' 500 ' })).toMatchObject({ aiDailyTokenLimit: 5_000_000, aiDailyCallLimit: 500 });
+    expect(() => loadConfig({ ...env, AI_DAILY_TOKEN_LIMIT: '0' })).toThrow(/AI_DAILY_TOKEN_LIMIT/);
+    expect(() => loadConfig({ ...env, AI_DAILY_CALL_LIMIT: 'lots' })).toThrow(/AI_DAILY_CALL_LIMIT/);
   });
 
   it('reads fallback models without duplicates or the main model, and "none" turns them off', () => {
     const list = loadConfig({ ...env, GEMINI_MODEL: 'gemini-a', GEMINI_FALLBACK_MODELS: ' gemini-b, gemini-a ,, gemini-b,gemini-c ' });
     expect(list.geminiFallbackModels).toEqual(['gemini-b', 'gemini-c']);
     expect(loadConfig({ ...env, GEMINI_FALLBACK_MODELS: 'NONE' }).geminiFallbackModels).toEqual([]);
+  });
+
+  it('reads the quick slots: one by default, 0 turns them off, a bad value is refused', () => {
+    expect(loadConfig({ ...env, WORKER_QUICK_SLOTS: '0' }).quickSlots).toBe(0);
+    expect(loadConfig({ ...env, WORKER_QUICK_SLOTS: ' 2 ' }).quickSlots).toBe(2);
+    expect(() => loadConfig({ ...env, WORKER_QUICK_SLOTS: '-1' })).toThrow(/WORKER_QUICK_SLOTS/);
+    expect(() => loadConfig({ ...env, WORKER_QUICK_SLOTS: 'many' })).toThrow(/WORKER_QUICK_SLOTS/);
   });
 
   it('lists every problem at once', () => {
@@ -83,6 +101,7 @@ describe('yt-dlp metadata', () => {
       hasVideo: true,
       videoIndex: null,
       imageUrls: [],
+      author: null,
     });
   });
 
@@ -110,18 +129,20 @@ describe('yt-dlp metadata', () => {
   });
 
   it('turns stderr into a short message', () => {
-    expect(ytDlpErrorMessage('ERROR: [Instagram] C9x: Requested content is not available, rate-limit reached or login required')).toBe(MESSAGES.videoPrivate);
-    expect(ytDlpErrorMessage('ERROR: [TikTok] 123: Video not available, status code 10204')).toBe(MESSAGES.videoFailed);
-    expect(ytDlpErrorMessage('ERROR: Unsupported URL: https://example.com')).toBe(MESSAGES.unsupportedLink);
-    expect(ytDlpErrorMessage('ERROR: HTTP Error 404: Not Found')).toBe(MESSAGES.videoUnavailable);
+    expect(ytDlpErrorCode('ERROR: [Instagram] C9x: Requested content is not available, rate-limit reached or login required')).toBe('videoPrivate');
+    expect(ytDlpErrorCode('ERROR: [TikTok] 123: Video not available, status code 10204')).toBe('videoFailed');
+    expect(ytDlpErrorCode('ERROR: Unsupported URL: https://example.com')).toBe('unsupportedLink');
+    expect(ytDlpErrorCode('ERROR: HTTP Error 404: Not Found')).toBe('videoUnavailable');
   });
 });
 
 describe('push', () => {
   it('builds the failure message and finds DeviceNotRegistered tokens', () => {
-    expect(failureMessages(['ExponentPushToken[a]'], 'job-1')).toEqual([
-      { to: 'ExponentPushToken[a]', title: "Couldn't read this recipe", body: 'Send a screenshot or paste the text instead.', data: { jobId: 'job-1' }, sound: 'default' },
+    expect(pushMessages(['ExponentPushToken[a]'], failurePush('recipe', 'job-1', MESSAGES.videoPrivate))).toEqual([
+      { to: 'ExponentPushToken[a]', title: "Couldn't save this recipe", body: MESSAGES.videoPrivate, data: { jobId: 'job-1', kind: 'recipe' }, sound: 'default' },
     ]);
+    expect(failurePush('sweep', 'job-2', MESSAGES.sweepEmpty).title).toBe("Couldn't read your scan");
+    expect(readyPush('r-1', 'Tinga de pollo')).toEqual({ title: 'Tinga de pollo', body: 'Ready in Recipes', data: { recipeId: 'r-1' } });
     const tokens = ['ExponentPushToken[a]', 'ExponentPushToken[b]', 'ExponentPushToken[c]'];
     const response = {
       data: [

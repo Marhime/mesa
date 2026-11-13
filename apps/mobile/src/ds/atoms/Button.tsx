@@ -1,8 +1,9 @@
 import { View } from 'react-native';
 
+import type { HapticKind } from '../haptics';
 import { createStyles } from '../theme';
 import { border, radius, size, space, type ColorToken } from '../tokens';
-import { Equalizer } from './Equalizer';
+import { Simmer } from './Simmer';
 import { Icon } from './Icon';
 import type { IconName } from './icons';
 import { Text } from './Text';
@@ -19,6 +20,8 @@ export interface ButtonProps {
   loading?: boolean;
   disabled?: boolean;
   iconStart?: IconName;
+  /** Given at the touch: `add` when it adds, `check` when it marks something at home. */
+  haptic?: HapticKind;
   accessibilityLabel?: string;
   accessibilityHint?: string;
 }
@@ -33,6 +36,7 @@ export function Button({
   loading,
   disabled,
   iconStart,
+  haptic,
   accessibilityLabel,
   accessibilityHint,
 }: ButtonProps) {
@@ -49,6 +53,7 @@ export function Button({
     <Touchable
       onPress={loading ? undefined : onPress}
       disabled={disabled}
+      haptic={haptic}
       feedback={variant === 'ghost' ? 'opacity' : 'scale'}
       accessibilityLabel={accessibilityLabel ?? label}
       accessibilityHint={accessibilityHint}
@@ -56,11 +61,12 @@ export function Button({
       style={boxStyle}
     >
       {loading ? (
-        <Equalizer size="sm" color={fg} accessibilityLabel={`${label}, in progress`} />
+        <Simmer size="sm" color={fg} accessibilityLabel={`${label}, in progress`} />
       ) : (
         <View style={styles.content}>
           {iconStart ? <Icon name={iconStart} size={sizeName === 'lg' ? 'lg' : 'md'} color={fg} /> : null}
-          <Text variant={sizeName === 'lg' ? 'labelLg' : 'label'} color={fg} underline={variant === 'ghost'} numberOfLines={1}>
+          {/* Large Dynamic Type: a long label goes onto a second line rather than being cut. */}
+          <Text variant={sizeName === 'lg' ? 'labelLg' : 'label'} color={fg} underline={variant === 'ghost'} align="center" numberOfLines={2}>
             {label}
           </Text>
         </View>
@@ -75,6 +81,7 @@ const useStyles = createStyles((t) => ({
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: space.xxl,
+    paddingVertical: space.sm,
     alignSelf: 'flex-start',
   },
   md: { minHeight: size.buttonMd },
@@ -84,5 +91,5 @@ const useStyles = createStyles((t) => ({
   secondaryDanger: { borderColor: t.colors.danger },
   ghost: { paddingHorizontal: space.sm, minHeight: size.touch },
   fullWidth: { alignSelf: 'stretch' },
-  content: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  content: { flexDirection: 'row', alignItems: 'center', gap: space.sm, flexShrink: 1 },
 }));

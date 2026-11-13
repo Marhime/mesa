@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { Button } from '../atoms/Button';
 import { Icon } from '../atoms/Icon';
 import { TextField } from '../atoms/TextField';
+import { haptics } from '../haptics';
 import { Banner } from '../molecules/Banner';
 import { ListGroup } from '../molecules/ListGroup';
 import { ListRow } from '../molecules/ListRow';
@@ -24,19 +25,32 @@ export interface AddRecipeSheetProps {
 export function AddRecipeSheet({ visible, onClose, readClipboardUrl, onSubmitLink, onScreenshot, onWrite, busy, error }: AddRecipeSheetProps) {
   const [step, setStep] = useState<'menu' | 'link'>('menu');
   const [link, setLink] = useState('');
+  // A link taken from the clipboard is still there: only what was typed or changed would be lost.
+  const [pasted, setPasted] = useState<string | null>(null);
+  const unsaved = link.trim().length > 0 && link !== pasted;
 
   useEffect(() => {
     if (!visible) {
       setStep('menu');
       setLink('');
+      setPasted(null);
     }
   }, [visible]);
+
+  // Save and Return both add (the `add` haptic at the touch, before the import starts).
+  const submit = () => {
+    if (busy || link.trim().length === 0) return;
+    haptics.add();
+    onSubmitLink(link);
+  };
 
   const openLink = () => {
     setStep('link');
     readClipboardUrl()
       .then((url) => {
-        if (url) setLink((current) => (current.length === 0 ? url : current));
+        if (!url) return;
+        setPasted(url);
+        setLink((current) => (current.length === 0 ? url : current));
       })
       .catch(() => undefined);
   };
@@ -46,11 +60,12 @@ export function AddRecipeSheet({ visible, onClose, readClipboardUrl, onSubmitLin
       <Sheet
         visible={visible}
         onClose={onClose}
-        title="Paste a link"
-        description="YouTube, Instagram, TikTok or any recipe page."
+        unsaved={unsaved}
+        title="Paste a link or text"
+        description="A YouTube, Instagram or TikTok link, a recipe page, or the recipe text itself."
         footer={
           <>
-            <Button label="Import" size="lg" fullWidth disabled={link.trim().length === 0} loading={busy} onPress={() => onSubmitLink(link)} />
+            <Button label="Save" size="lg" fullWidth disabled={link.trim().length === 0} loading={busy} onPress={submit} />
             <Button label="Back" variant="ghost" fullWidth onPress={() => setStep('menu')} />
           </>
         }
@@ -58,16 +73,14 @@ export function AddRecipeSheet({ visible, onClose, readClipboardUrl, onSubmitLin
         <TextField
           value={link}
           onChangeText={setLink}
-          label="Link"
-          placeholder="https://"
+          label="Link or text"
+          placeholder="A link, or the recipe text"
           icon="link"
           clearable
           autoFocus
-          keyboardType="url"
           autoCapitalize="none"
-          autoCorrect={false}
           returnKeyType="go"
-          onSubmitEditing={() => link.trim() && onSubmitLink(link)}
+          onSubmitEditing={submit}
         />
         {error ? <Banner tone="danger" text={error} /> : null}
       </Sheet>
@@ -75,12 +88,12 @@ export function AddRecipeSheet({ visible, onClose, readClipboardUrl, onSubmitLin
   }
 
   return (
-    <Sheet visible={visible} onClose={onClose} title="Add recipe">
-      <ListGroup>
-        <ListRow title="Paste a link" subtitle="From a video or a website" leading={<Icon name="link" />} chevron onPress={openLink} />
+    <Sheet visible={visible} onClose={onClose} unsaved={unsaved} title="Add recipe">
+      <ListGroup inset="icon">
+        <ListRow title="Paste a link or text" subtitle="A video, a website, or a recipe you copied" leading={<Icon name="link" />} chevron onPress={openLink} />
         <ListRow
           title="From a screenshot"
-          subtitle="Pick a photo of a recipe"
+          subtitle="Up to 4 photos of one recipe"
           leading={<Icon name="image" />}
           chevron
           onPress={onScreenshot}

@@ -1,5 +1,17 @@
 // Reading the pantry (the pantry_status view: each row with its state) and how it is shown.
-import { capitalize, formatQuantity, type Category, type PantryItem, type PantryLevel, type Zone } from '@mesa/shared';
+import {
+  capitalize,
+  familyOf,
+  formatQuantity,
+  pictoOf,
+  type Category,
+  type Family,
+  type PantryItem,
+  type PantryLevel,
+  type Picto,
+  type Unit,
+  type UnitFamily,
+} from '@mesa/shared';
 import { useQuery } from '@tanstack/react-query';
 import { useMemo } from 'react';
 
@@ -16,10 +28,14 @@ export type PantryState = 'ok' | 'soon' | 'check' | 'gone';
 const RAIL_DAYS = 7;
 const RAIL_MAX = 8;
 
-/** Something in the pantry, with its product's name and category. */
+/** Something in the pantry, with its product's name, category, family (section) and picto. */
 export interface PantryEntry extends Omit<PantryItem, 'household_id'> {
   name: string;
   category: Category;
+  family: Family;
+  picto: Picto;
+  /** How the product is counted (pcs, g, ml): the unit the amount field starts with. */
+  unitFamily: UnitFamily;
   shelfLifeDays: number | null;
   state: PantryState;
 }
@@ -28,6 +44,9 @@ type Row = Omit<PantryItem, 'household_id'> & {
   name_en: string;
   category: Category;
   shelf_life_days: number | null;
+  unit_family: UnitFamily;
+  family: string | null;
+  picto: string | null;
   state: PantryState | 'out';
 };
 
@@ -35,14 +54,17 @@ async function fetchPantry(): Promise<PantryEntry[]> {
   const rows = must(
     await supabase
       .from('pantry_status')
-      .select('id, product_id, zone, quantity, unit, level, expires_on, updated_at, name_en, category, shelf_life_days, state')
+      .select('id, product_id, zone, quantity, unit, level, expires_on, updated_at, name_en, category, shelf_life_days, unit_family, family, picto, state')
       .neq('state', 'out')
       .order('expires_on', { ascending: true, nullsFirst: false }),
   ) as Row[];
-  return rows.map(({ name_en, shelf_life_days, state, ...item }) => ({
+  return rows.map(({ name_en, shelf_life_days, unit_family, family, picto, state, ...item }) => ({
     ...item,
     quantity: item.quantity === null ? null : Number(item.quantity),
     name: capitalize(name_en),
+    family: familyOf({ family, category: item.category }),
+    picto: pictoOf({ picto, category: item.category }),
+    unitFamily: unit_family,
     shelfLifeDays: shelf_life_days,
     state: state as PantryState,
   }));
@@ -53,7 +75,7 @@ export interface UseSoonView {
   key: string;
   productId: string;
   name: string;
-  category: Category;
+  picto: Picto;
   when: string;
   urgent: boolean;
   freshness: number;
@@ -66,7 +88,7 @@ function useSoonView(e: PantryEntry, today: Date): UseSoonView {
     key: e.id,
     productId: e.product_id,
     name: e.name,
-    category: e.category,
+    picto: e.picto,
     when: untilLabel(days),
     urgent: days <= 0,
     freshness: Math.max(0.05, Math.min(1, days / life)),
@@ -74,8 +96,8 @@ function useSoonView(e: PantryEntry, today: Date): UseSoonView {
 }
 
 /**
- * The pantry. Derived: what is at home (by zone), what to use within the week (the rail), and what is
- * past its date and needs a look ("Still there?").
+ * The pantry. Derived: what is at home, what to use within the week (the rail), and what is past its
+ * date and needs a look ("Still there?"). Sections by type of food: pantrySections.ts.
  */
 export function usePantry() {
   const householdId = useHouseholdId();
@@ -89,10 +111,11 @@ export function usePantry() {
       .filter((e) => e.expires_on !== null && e.state !== 'check' && daysUntil(e.expires_on, today) <= RAIL_DAYS)
       .slice(0, RAIL_MAX)
       .map((e) => useSoonView(e, today));
-    const inZone = (zone: Zone) => items.filter((e) => e.zone === zone && e.state !== 'check');
-    return { all, items, stale, useSoon, inZone };
+    const atHome = items.filter((e) => e.state !== 'check');
+    return { all, items, stale, useSoon, atHome };
   }, [query.data]);
-  return { ...query, ...view };
+  const { data, isLoading, isError, refetch } = query;
+  return { data, isLoading, isError, refetch, ...view };
 }
 
 /** "updated after Saturday's shopping", from the last purchase. Null before the first one. */
@@ -118,15 +141,20 @@ export function pantrySummary(count: number, updated: string | null): string {
   return [plural(count, 'item', 'items'), updated].filter(Boolean).join(' · ');
 }
 
-const LEVEL_QUARTERS: Record<PantryLevel, number> = { full: 4, half: 2, low: 1, out: 0 };
+const LEVEL_TEXT: Record<Exclude<PantryLevel, 'out'>, string> = { full: 'Plenty', half: 'About half', low: 'Running low' };
 
-/** How much is left, as a tile shows it. */
-export function pantryAmount(e: Pick<PantryEntry, 'quantity' | 'unit' | 'level'>): { text: string; low: boolean; quarters: number } {
-  const quarters = LEVEL_QUARTERS[e.level ?? 'full'];
-  if (e.level === 'low') return { text: 'Almost out', low: true, quarters };
-  if (e.quantity !== null) return { text: formatQuantity(e.quantity, e.unit) || 'At home', low: false, quarters };
-  if (e.level === 'half') return { text: 'About half', low: false, quarters };
-  return { text: e.level === 'full' ? 'Full' : 'At home', low: false, quarters };
+/** How much is left: the amount when counted ("6", "500 g"), else a plain word. Low turns red. */
+export function pantryAmount(e: Pick<PantryEntry, 'quantity' | 'unit' | 'level'>): { text: string; low: boolean } {
+  if (e.quantity !== null && e.quantity > 0) return { text: formatQuantity(e.quantity, e.unit) || 'Plenty', low: e.level === 'low' };
+  const level = e.level === null || e.level === 'out' ? 'full' : e.level;
+  return { text: LEVEL_TEXT[level], low: level === 'low' };
+}
+
+const COUNTED_IN: Record<UnitFamily, Unit | null> = { count: 'unit', mass: 'g', volume: 'ml', other: null };
+
+/** The amount as the edit field starts: the stored one, or an empty field already in pcs / g / ml. */
+export function pantryEditAmount(e: Pick<PantryEntry, 'quantity' | 'unit' | 'unitFamily'>): { quantity: number | null; unit: Unit | null } {
+  return { quantity: e.quantity, unit: e.unit ?? COUNTED_IN[e.unitFamily] };
 }
 
 /** "Keeps until Nov 12", "Expired Sun · still there?", "No date". */
@@ -137,7 +165,7 @@ export function pantryDateLine(e: Pick<PantryEntry, 'expires_on' | 'state'>): st
 }
 
 export const PANTRY_LEVELS: { value: PantryLevel; label: string }[] = [
-  { value: 'full', label: 'Full' },
+  { value: 'full', label: 'Plenty' },
   { value: 'half', label: 'Half' },
   { value: 'low', label: 'Low' },
   { value: 'out', label: 'Out' },

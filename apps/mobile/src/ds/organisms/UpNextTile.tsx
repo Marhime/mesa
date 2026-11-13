@@ -15,11 +15,11 @@ export interface UpNextTileProps {
   /** "All at home" (success) or "1 to buy". */
   status?: { icon: IconName; text: string; tone: 'success' | 'muted' };
   onPress: () => void;
-  /** Long press: remove from Up next. */
+  /** Long press: take it off the menu. Also offered to VoiceOver as the "Take off the menu" action. */
   onLongPress?: () => void;
 }
 
-/** A planned recipe in the Up next rail: photo, name, whether everything is at home. */
+/** A planned recipe in the On the menu rail: photo, name, whether everything is at home. */
 export function UpNextTile({ title, imageUrl, seed, status, onPress, onLongPress }: UpNextTileProps) {
   const styles = useStyles();
   return (
@@ -28,7 +28,11 @@ export function UpNextTile({ title, imageUrl, seed, status, onPress, onLongPress
       onLongPress={onLongPress}
       feedback="scale"
       accessibilityLabel={[title, status?.text].filter(Boolean).join(', ')}
-      accessibilityHint={onLongPress ? 'Opens the recipe. Long press to remove it from Up next.' : 'Opens the recipe'}
+      accessibilityHint="Opens the recipe"
+      accessibilityActions={onLongPress ? [{ name: 'remove', label: 'Take off the menu' }] : undefined}
+      onAccessibilityAction={(e) => {
+        if (e.nativeEvent.actionName === 'remove') onLongPress?.();
+      }}
       style={styles.tile}
     >
       <RecipeCover uri={imageUrl} seed={seed} shape="tile" />
@@ -44,5 +48,5 @@ export function UpNextTile({ title, imageUrl, seed, status, onPress, onLongPress
 
 const useStyles = createStyles((t) => ({
   tile: { width: size.upNextCard, borderRadius: radius.lg, overflow: 'hidden', backgroundColor: t.colors.surfaceRaised },
-  text: { gap: space.xs / 2, paddingHorizontal: space.lg, paddingTop: space.md, paddingBottom: space.lg },
+  text: { gap: space.xxs, paddingHorizontal: space.lg, paddingTop: space.md, paddingBottom: space.lg },
 }));

@@ -20,7 +20,7 @@ describe('parsePage: @graph + HowToSection (WordPress, Spanish)', () => {
     expect(recipe.image).toBe('https://cocinaconlupita.example/wp-content/uploads/2025/03/tinga-de-pollo-500x500.jpg');
   });
 
-  it('keeps ingredient lines as written and drops section headers', () => {
+  it('keeps ingredient lines as written, section headings too (the import reads them as sections)', () => {
     expect(recipe.ingredients).toEqual([
       '2 pechugas de pollo (aprox. 800 g)',
       '3 jitomates',
@@ -29,6 +29,7 @@ describe('parsePage: @graph + HowToSection (WordPress, Spanish)', () => {
       '1 cucharada de aceite',
       '1 taza de caldo de pollo',
       'Sal al gusto',
+      'Para servir:',
       'Tostadas (opcional)',
     ]);
   });

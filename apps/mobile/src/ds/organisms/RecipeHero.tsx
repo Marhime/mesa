@@ -1,8 +1,10 @@
 import type { ReactNode } from 'react';
 import { View } from 'react-native';
+import Animated, { useAnimatedStyle, useReducedMotion, useSharedValue } from 'react-native-reanimated';
 
+import { useScreenScroll } from '../screenScroll';
 import { createStyles } from '../theme';
-import { layout, radius, space } from '../tokens';
+import { gesture, layout, radius, size, space } from '../tokens';
 import { RecipeCover } from './RecipeCover';
 
 export interface RecipeHeroProps {
@@ -13,12 +15,30 @@ export interface RecipeHeroProps {
   children: ReactNode;
 }
 
-/** Full-bleed photo, with the recipe's header on a rounded panel that overlaps it. */
+/**
+ * Full-bleed photo, with the recipe's header on a rounded panel that overlaps it. Pulling down
+ * stretches the photo (no bare surface above it); scrolling up, it drifts at half speed under the panel.
+ */
 export function RecipeHero({ imageUrl, seed, children }: RecipeHeroProps) {
   const styles = useStyles();
+  const scroll = useScreenScroll();
+  const still = useSharedValue(0);
+  const y = scroll ?? still;
+  const reduced = useReducedMotion();
+  const photo = useAnimatedStyle(() => {
+    const offset = y.get();
+    if (offset < 0) {
+      // Grow by the pull and keep the top edge pinned to the screen top.
+      return { transform: [{ translateY: offset / 2 }, { scale: 1 - offset / size.dishHero }] };
+    }
+    return { transform: [{ translateY: reduced ? 0 : offset * gesture.parallax }, { scale: 1 }] };
+  });
+
   return (
     <View>
-      <RecipeCover uri={imageUrl} seed={seed} shape="hero" />
+      <Animated.View style={photo}>
+        <RecipeCover uri={imageUrl} seed={seed} shape="hero" />
+      </Animated.View>
       <View style={styles.panel}>{children}</View>
     </View>
   );

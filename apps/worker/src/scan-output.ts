@@ -1,14 +1,13 @@
 // Response schemas for sweeps and receipts, and the cleanup of what the model returns.
-import { type Schema, Type } from '@google/genai';
+import { enumOf, nullable, Type, type ModelSchema } from './model-schema';
 import type { Category, PantryLevel } from '@mesa/shared';
 import { z } from 'zod';
 
 import { CATEGORIES, ModelOutputError, toCategory, toQuantity } from './model-output';
 
-const nullable = (s: Schema): Schema => ({ ...s, nullable: true });
-const category: Schema = { type: Type.STRING, format: 'enum', enum: [...CATEGORIES] };
+const category: ModelSchema = enumOf(CATEGORIES);
 
-export const SWEEP_RESPONSE_SCHEMA: Schema = {
+export const SWEEP_RESPONSE_SCHEMA: ModelSchema = {
   type: Type.OBJECT,
   properties: {
     items: {
@@ -21,7 +20,7 @@ export const SWEEP_RESPONSE_SCHEMA: Schema = {
           category,
           quantity: nullable({ type: Type.NUMBER }),
           unit: nullable({ type: Type.STRING }),
-          level: { type: Type.STRING, format: 'enum', enum: ['full', 'half', 'low'] },
+          level: enumOf(['full', 'half', 'low']),
           expires_on: nullable({ type: Type.STRING }),
           confidence: { type: Type.NUMBER },
         },
@@ -32,7 +31,7 @@ export const SWEEP_RESPONSE_SCHEMA: Schema = {
   required: ['items'],
 };
 
-export const RECEIPT_RESPONSE_SCHEMA: Schema = {
+export const RECEIPT_RESPONSE_SCHEMA: ModelSchema = {
   type: Type.OBJECT,
   properties: {
     is_receipt: { type: Type.BOOLEAN },

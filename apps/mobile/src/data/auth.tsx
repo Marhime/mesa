@@ -2,12 +2,18 @@ import type { Session } from '@supabase/supabase-js';
 import { useMutation } from '@tanstack/react-query';
 import * as AppleAuthentication from 'expo-apple-authentication';
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
-import { Platform } from 'react-native';
 
+import { forgetConversations } from './askMemory';
 import { isConfigured } from './env';
 import { forgetPushToken } from './push';
 import { clearCache } from './queryClient';
 import { supabase } from './supabase';
+
+/** Signed out: nothing of the account stays on the phone for the next one (lists, recipes, Ask Mesa). */
+function forgetAccount(): void {
+  clearCache();
+  forgetConversations();
+}
 
 interface AuthState {
   session: Session | null;
@@ -28,7 +34,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .then(({ data }) => alive && setState({ session: data.session, ready: true }))
       .catch(() => alive && setState({ session: null, ready: true }));
     const { data } = supabase.auth.onAuthStateChange((event, session) => {
-      if (event === 'SIGNED_OUT') clearCache();
+      if (event === 'SIGNED_OUT') forgetAccount();
       setState({ session, ready: true });
     });
     return () => {
@@ -50,9 +56,17 @@ export function useUserId(): string | null {
 
 export type PasswordMode = 'signIn' | 'signUp';
 
+const CONFIRM_EMAIL = 'confirm_email_required';
+
+/** Sign-up worked but the project wants the email confirmed first: not a failure, a next step. */
+export function isConfirmEmailPending(error: unknown): boolean {
+  const msg = error instanceof Error ? error.message : '';
+  return msg === CONFIRM_EMAIL || /email not confirmed/i.test(msg);
+}
+
 /**
- * Email + password. No email is ever sent: "Confirm email" is turned off in Supabase,
- * so sign-up returns a session right away.
+ * Email + password. With "Confirm email" off in Supabase, sign-up returns a session right away;
+ * with it on, sign-up throws CONFIRM_EMAIL and the person signs in after tapping the link.
  */
 export function usePasswordAuth() {
   return useMutation({
@@ -67,21 +81,9 @@ export function usePasswordAuth() {
       if (error) throw error;
       // Supabase hides "already registered" behind an empty identities list.
       if (data.user && data.user.identities?.length === 0) throw new Error('User already registered');
-      if (!data.session) throw new Error('confirm_email_required');
+      if (!data.session) throw new Error(CONFIRM_EMAIL);
     },
   });
-}
-
-/** Sign in with Apple is offered only on iOS devices where it is available. */
-export function useAppleAvailable(): boolean {
-  const [available, setAvailable] = useState(false);
-  useEffect(() => {
-    if (Platform.OS !== 'ios') return;
-    AppleAuthentication.isAvailableAsync()
-      .then(setAvailable)
-      .catch(() => setAvailable(false));
-  }, []);
-  return available;
 }
 
 export function isCancelled(error: unknown): boolean {
@@ -116,5 +118,5 @@ export async function signOut(): Promise<void> {
   // (offline in the shop): sign this device out anyway.
   const { error } = await supabase.auth.signOut();
   if (error) await supabase.auth.signOut({ scope: 'local' });
-  clearCache();
+  forgetAccount();
 }

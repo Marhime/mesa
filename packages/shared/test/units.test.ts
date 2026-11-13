@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { formatQuantity, parseUnit, roundForShopping, scaleQuantity, unitFamily, type Unit } from '../src/index';
+import { parseUnit, roundForShopping, scaleQuantity, unitFamily, type Unit } from '../src/index';
 
 describe('parseUnit', () => {
   it.each<[string, Unit, number]>([
@@ -95,38 +95,5 @@ describe('roundForShopping (same rule as SQL round_for_shopping)', () => {
     expect(ceilLists.map((s) => s.slice(1, -1)).sort()).toEqual(['bunch', 'can', 'clove', 'g', 'ml', 'pack', 'slice', 'unit']);
     expect(body).toMatch(/p_unit is null or/);
     expect(body).toMatch(/else round\(p_quantity, 2\)/);
-  });
-});
-
-describe('formatQuantity', () => {
-  it.each<[number | null, Unit | null, string]>([
-    [500, 'g', '500 g'],
-    [1500, 'g', '1.5 kg'],
-    [1000, 'g', '1 kg'],
-    [1234, 'g', '1.23 kg'],
-    [907.184, 'g', '907.18 g'],
-    [250, 'ml', '250 ml'],
-    [1500, 'ml', '1.5 L'],
-    [2000, 'ml', '2 L'],
-    [2, 'unit', '2'],
-    [1.5, 'unit', '1.5'],
-    [3, null, '3'],
-    [2, 'tbsp', '2 tbsp'],
-    [0.5, 'cup', '½ cup'],
-    [1.5, 'cup', '1½ cups'],
-    [0.25, 'tsp', '¼ tsp'],
-    [0.75, 'tbsp', '¾ tbsp'],
-    [0.33, 'cup', '⅓ cup'],
-    [0.6, 'cup', '0.6 cup'],
-    [1, 'can', '1 can'],
-    [2, 'can', '2 cans'],
-    [1, 'bunch', '1 bunch'],
-    [3, 'clove', '3 cloves'],
-    [2, 'slice', '2 slices'],
-    [1, 'pinch', '1 pinch'],
-    [null, 'g', ''],
-    [null, null, ''],
-  ])('(%s, %s) → %j', (q, unit, expected) => {
-    expect(formatQuantity(q, unit)).toBe(expected);
   });
 });

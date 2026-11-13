@@ -6,10 +6,11 @@ import { StyleSheet } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
+import { TabBarSpaceProvider } from './layoutHooks';
 import { ToastProvider } from './molecules/Toast';
 import { useTheme } from './theme';
 
-/** Wraps the app: gestures, safe areas, navigation colors, status bar, toasts. */
+/** Wraps the app: gestures, safe areas, navigation colors, status bar, tab bar space, toasts. */
 export function DesignSystemProvider({ children }: { children: ReactNode }) {
   const theme = useTheme();
   const navTheme = useMemo<NavTheme>(() => {
@@ -36,10 +37,12 @@ export function DesignSystemProvider({ children }: { children: ReactNode }) {
     <GestureHandlerRootView style={[styles.root, { backgroundColor: theme.colors.surface }]}>
       <SafeAreaProvider>
         <ThemeProvider value={navTheme}>
-          <ToastProvider>
-            <StatusBar style={theme.scheme === 'dark' ? 'light' : 'dark'} />
-            {children}
-          </ToastProvider>
+          <TabBarSpaceProvider>
+            <ToastProvider>
+              <StatusBar style={theme.scheme === 'dark' ? 'light' : 'dark'} />
+              {children}
+            </ToastProvider>
+          </TabBarSpaceProvider>
         </ThemeProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

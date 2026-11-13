@@ -13,7 +13,7 @@ describe('normalizeModelOutput', () => {
         { raw_text: '1/2 kg de papa', name_en: 'Potato', quantity: '1/2', unit: 'kg', is_guessed: 'no', is_optional: 0, category: 'Vegetables' },
         { raw_text: '', name_en: '', quantity: null },
         '2 cdas de aceite',
-        { raw_text: 'Sal', name_en: 'salt', quantity: 0, unit: '', is_guessed: true, category: 'spices' },
+        { raw_text: 'Sal', name_en: 'salt', quantity: 0, unit: '', is_guessed: true, category: 'spices', section: null },
         { raw_text: 'tortillas', name_en: 'corn tortilla', quantity: 20, is_guessed: 'true', category: 'BAKERY' },
         { raw_text: 'Queso fresco para servir', name_en: 'queso fresco', quantity: 'null', unit: 'null', is_optional: 'yes', category: 'dairy & eggs' },
         { raw_text: '100', name_en: '???', quantity: 100 },
@@ -33,11 +33,11 @@ describe('normalizeModelOutput', () => {
       language: 'es',
       steps: ['Cuece las papas.', 'Arma los tacos.', 'Sirve.', 'Disfruta.'],
       ingredients: [
-        { raw_text: '1/2 kg de papa', name_en: 'potato', quantity: 0.5, unit: 'kg', is_guessed: false, is_optional: false, category: 'produce' },
-        { raw_text: '2 cdas de aceite', name_en: 'aceite', quantity: 2, unit: 'tbsp', is_guessed: false, is_optional: false, category: null },
-        { raw_text: 'Sal', name_en: 'salt', quantity: null, unit: null, is_guessed: false, is_optional: false, category: 'cupboard' },
-        { raw_text: 'tortillas', name_en: 'corn tortilla', quantity: 20, unit: null, is_guessed: true, is_optional: false, category: 'bakery' },
-        { raw_text: 'Queso fresco para servir', name_en: 'queso fresco', quantity: null, unit: null, is_guessed: false, is_optional: true, category: 'dairy' },
+        { raw_text: '1/2 kg de papa', name_en: 'potato', quantity: 0.5, unit: 'kg', is_guessed: false, is_optional: false, category: 'produce', section: null },
+        { raw_text: '2 cdas de aceite', name_en: 'aceite', quantity: 2, unit: 'tbsp', is_guessed: false, is_optional: false, category: null, section: null },
+        { raw_text: 'Sal', name_en: 'salt', quantity: null, unit: null, is_guessed: false, is_optional: false, category: 'cupboard', section: null },
+        { raw_text: 'tortillas', name_en: 'corn tortilla', quantity: 20, unit: null, is_guessed: true, is_optional: false, category: 'bakery', section: null },
+        { raw_text: 'Queso fresco para servir', name_en: 'queso fresco', quantity: null, unit: null, is_guessed: false, is_optional: true, category: 'dairy', section: null },
       ],
     });
   });

@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { ImportError } from '../src/errors';
 import { detectPlatform, extractFirstUrl, normalizeUrl, parseHttpUrl, youtubeVideoId } from '../src/url';
+import { fetchVideoMeta, videoLink } from '../src/ytdlp';
+import { listChannelVideos } from '../src/ytdlp-channel';
 
 describe('detectPlatform', () => {
   it.each([
@@ -81,5 +84,25 @@ describe('extractFirstUrl', () => {
     expect(parseHttpUrl('ftp://example.com/x')).toBeNull();
     expect(parseHttpUrl('javascript:alert(1)')).toBeNull();
     expect(parseHttpUrl('https://example.com/x')?.hostname).toBe('example.com');
+  });
+});
+
+describe('videoLink (what yt-dlp is ever given)', () => {
+  it('takes the video hosts the pipelines send it', () => {
+    for (const url of ['https://www.youtube.com/watch?v=dQw4w9WgXcQ', 'https://www.youtube.com/channel/UCE-NIVMcV8A2GwGcCYLSMDQ/videos', 'https://www.instagram.com/reel/C9xYz123AbC/', 'https://vm.tiktok.com/ZMhAbCdEf/', 'https://pin.it/3xYzAbC']) {
+      expect(videoLink(url)).toBe(url);
+    }
+  });
+
+  it('refuses websites, addresses, other ports and anything that is not an http(s) link', () => {
+    for (const url of ['https://cocina.example/recetas/pozole', 'http://localhost/x', 'http://127.0.0.1/watch?v=dQw4w9WgXcQ', 'http://169.254.169.254/', 'https://www.youtube.com:8443/watch?v=dQw4w9WgXcQ', 'https://user:pw@www.youtube.com/watch?v=dQw4w9WgXcQ', 'file:///etc/passwd', 'www.youtube.com/watch?v=dQw4w9WgXcQ', '--exec=sh']) {
+      expect(() => videoLink(url), url).toThrow(ImportError);
+    }
+  });
+
+  it('is checked before yt-dlp runs', async () => {
+    const opts = { path: 'yt-dlp-not-run-in-tests', cookies: null };
+    await expect(fetchVideoMeta(opts, 'http://10.0.0.1/clip.mp4', '/nonexistent')).rejects.toMatchObject({ code: 'unsupportedLink' });
+    await expect(listChannelVideos(opts, 'https://evil.example/@chef', '/nonexistent')).rejects.toMatchObject({ code: 'unsupportedLink' });
   });
 });

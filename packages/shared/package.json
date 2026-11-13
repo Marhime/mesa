@@ -8,7 +8,8 @@
   "scripts": {
     "typecheck": "tsc -p tsconfig.src.json && tsc -p tsconfig.json",
     "test": "vitest run",
-    "gen:catalog": "tsx scripts/gen-catalog.ts"
+    "gen:catalog": "tsx scripts/gen-catalog.ts",
+    "gen:job-kinds": "tsx scripts/gen-job-kinds.ts"
   },
   "devDependencies": {
     "@types/node": "^22.20.5",

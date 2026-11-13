@@ -1,35 +1,36 @@
 // Stocking the pantry by hand: the basics people already own, what their recipes use, staples on day one,
 // and finding things by any of their names ("aguacate" finds Avocado).
-import { matchProduct, normalizeText, type Category, type Product, type Zone } from '@mesa/shared';
+import { matchProduct, normalizeText, type Category, type Product } from '@mesa/shared';
 import { useQuery } from '@tanstack/react-query';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 
 import { resolveGroceryInput, type ResolvedGroceryItem } from '../lib/groceryInput';
 import { useCatalog, useCatalogIndex } from './catalog';
-import { toAddInputs, type AddInput } from './groceries';
+import type { AddInput } from './groceries';
+import { toAddInputs } from './groceryAdd';
 import { useHouseholdId } from './household';
+import { RECIPE_PRODUCTS_KEY } from './keys';
 import { usePantry, type PantryEntry } from './pantry';
 import type { PantryAddInput } from './rpc';
 import { useAddToPantry, useSetAlwaysHave, useStaples } from './pantryWrites';
 import { must, supabase } from './supabase';
 
-/** Basics most kitchens here already have, by where they live. Names are catalog products. */
+/** Basics most kitchens already have, wherever they are, by where they live. Names are catalog products. */
 const BASICS: { key: string; label: string; names: string[] }[] = [
   {
     key: 'cupboard',
     label: 'Cupboard',
     names: [
-      'Rice', 'Black beans', 'Pinto beans', 'Pasta', 'Lentils', 'Flour', 'Corn masa flour', 'Canned tuna',
-      'Chipotle in adobo', 'Tomato puree', 'Broth', 'Guajillo chile', 'Ancho chile', 'Árbol chile', 'Soy sauce',
-      'Hot sauce', 'Ketchup', 'Mustard', 'Coffee', 'Honey', 'Oats', 'Tostadas',
+      'Rice', 'Pasta', 'Lentils', 'Chickpeas', 'Black beans', 'Flour', 'Canned tuna', 'Tomato puree', 'Broth', 'Soy sauce',
+      'Hot sauce', 'Ketchup', 'Mustard', 'Coffee', 'Tea', 'Honey', 'Oats', 'Peanut butter',
     ],
   },
   {
     key: 'fridge',
     label: 'Fridge',
-    names: ['Egg', 'Milk', 'Butter', 'Corn tortillas', 'Queso fresco', 'Mexican crema', 'Mayonnaise', 'Salsa', 'Lime', 'Serrano pepper', 'Cilantro'],
+    names: ['Egg', 'Milk', 'Butter', 'Cheese', 'Yogurt', 'Mayonnaise', 'Lemon'],
   },
-  { key: 'produce', label: 'Fruit & veg', names: ['Onion', 'Garlic', 'Tomato', 'Avocado', 'Potato'] },
+  { key: 'produce', label: 'Fruit & veg', names: ['Onion', 'Garlic', 'Tomato', 'Potato', 'Carrot', 'Avocado'] },
   { key: 'freezer', label: 'Freezer', names: ['Frozen vegetables', 'Frozen fries'] },
 ];
 
@@ -51,7 +52,7 @@ export interface StockGroup {
 function useRecipeProducts() {
   const householdId = useHouseholdId();
   return useQuery({
-    queryKey: ['recipeProducts'],
+    queryKey: RECIPE_PRODUCTS_KEY,
     enabled: !!householdId,
     queryFn: async (): Promise<string[]> => {
       const rows = must(
@@ -139,28 +140,41 @@ export function usePantrySearch(query: string, items: PantryEntry[]): { results:
   }, [query, items, index]);
 }
 
-/** Zone names for the "+" sheet chips' default placement. */
-export const ZONE_LABEL: Record<Zone, string> = { fridge: 'Fridge', freezer: 'Freezer', cupboard: 'Cupboard' };
+/** What a stocking session started with: day one or not, and the staples offered then (pre-ticked). */
+interface StockSession {
+  firstRun: boolean;
+  staples: StockGroup | null;
+}
 
 /**
  * The "+" sheet as a session: ticks, typed additions, and what confirming does — ticked basics go in the
  * pantry (no date: owned for a while); on day one, staples left unticked become "we don't keep it".
+ * Day one and its staples are taken when the sheet opens: the first thing added (the pantry is no longer
+ * empty) changes neither. `start` never changes.
  */
 export function usePantryStocking(onError: (e: unknown) => void) {
   const options = useStockOptions();
   const addToPantry = useAddToPantry();
   const setAlwaysHave = useSetAlwaysHave();
+  const [session, setSession] = useState<StockSession | null>(null);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
+  // The ticks it opened with, to tell a change from a look.
+  const [opened, setOpened] = useState<ReadonlySet<string>>(new Set());
   const [justAdded, setJustAdded] = useState<string[]>([]);
-  const [open, setOpen] = useState(false);
+  const latest = useRef(options);
+  latest.current = options;
 
-  const staples = options.groups.find((g) => g.kind === 'staples');
   const start = useCallback(() => {
+    const { groups, firstRun } = latest.current;
+    const staples = groups.find((g) => g.kind === 'staples') ?? null;
     // Day one: staples start ticked (most kitchens have them); untick what you don't keep.
-    setSelected(new Set(staples?.items.map((i) => i.productId) ?? []));
+    const ticked = new Set(staples?.items.map((i) => i.productId) ?? []);
+    setSession({ firstRun, staples });
+    setSelected(ticked);
+    setOpened(ticked);
     setJustAdded([]);
-    setOpen(true);
-  }, [staples]);
+  }, []);
+  const close = useCallback(() => setSession(null), []);
   const toggle = useCallback(
     (key: string) =>
       setSelected((prev) => {
@@ -171,34 +185,46 @@ export function usePantryStocking(onError: (e: unknown) => void) {
       }),
     [],
   );
+  const staples = session?.staples ?? null;
   const stapleIds = new Set(staples?.items.map((i) => i.productId) ?? []);
   const toAdd = [...selected].filter((id) => !stapleIds.has(id));
+  const others = options.groups.filter((g) => g.kind !== 'staples');
 
   const typed = (items: ResolvedGroceryItem[]) => {
     setJustAdded((prev) => [...prev, ...items.map((i) => i.label.toLowerCase())]);
     addToPantry.mutate(toPantryInputs(items), { onError });
   };
 
-  const confirm = async (): Promise<number> => {
+  /** How many things were added (0 when only the basics were kept), or null when it failed. */
+  const confirm = async (): Promise<number | null> => {
     const notKept = [...stapleIds].filter((id) => !selected.has(id)).map((productId) => ({ productId, value: false }));
     try {
+      // Its failure says so itself (meta).
       if (notKept.length > 0) await setAlwaysHave.mutateAsync(notKept);
+    } catch {
+      return null;
+    }
+    try {
       const added = toAdd.length > 0 ? await addToPantry.mutateAsync(toAdd.map((product_id) => ({ product_id }))) : 0;
-      setOpen(false);
+      setSession(null);
       return added + justAdded.length;
     } catch (e) {
       onError(e);
-      return 0;
+      return null;
     }
   };
 
   return {
-    ...options,
-    open,
+    groups: session ? (staples ? [staples, ...others] : others) : options.groups,
+    firstRun: session?.firstRun ?? options.firstRun,
+    ready: options.ready,
+    open: session !== null,
     start,
-    close: () => setOpen(false),
+    close,
     selected,
     toggle,
+    /** Ticks changed since it opened (closing would lose them). */
+    changed: selected.size !== opened.size || [...selected].some((id) => !opened.has(id)),
     addCount: toAdd.length,
     justAdded,
     typed,

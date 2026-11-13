@@ -1,5 +1,6 @@
-// "Done shopping": where each item in the cart goes and how long it keeps (the Put away sheet).
-import { capitalize, type Category, type Zone } from '@mesa/shared';
+// "Done shopping": how long each item in the cart keeps (the Put away sheet). Where it goes is the
+// product's usual place: the household doesn't sort the pantry by place.
+import { capitalize, pictoOf, type Category, type Picto, type Zone } from '@mesa/shared';
 import { useCallback, useMemo, useState } from 'react';
 
 import { dayLabel, daysUntil, isoInDays } from '../lib/days';
@@ -21,6 +22,7 @@ export interface PutAwayLine {
   id: string;
   name: string;
   category: Category;
+  picto: Picto;
   quantity: string;
   zone: Zone;
   keepsDays: number | null;
@@ -28,7 +30,6 @@ export interface PutAwayLine {
 }
 
 interface Choice {
-  zone?: Zone;
   keepsDays?: number | null;
 }
 
@@ -58,7 +59,7 @@ export function usePutAway(cart: GroceryLine[]) {
       cart.flatMap((line) => {
         const product = line.product_id ? products.get(line.product_id) : undefined;
         const choice = choices[line.key] ?? {};
-        const zone = choice.zone ?? product?.default_zone ?? defaultZoneFor(line.category);
+        const zone = product?.default_zone ?? defaultZoneFor(line.category);
         const keepsDays =
           choice.keepsDays !== undefined ? choice.keepsDays : zone === 'freezer' ? null : (product?.shelf_life_days ?? null);
         return [
@@ -67,6 +68,7 @@ export function usePutAway(cart: GroceryLine[]) {
             id: resolveId(line.id),
             name: capitalize(line.label),
             category: product?.category ?? line.category,
+            picto: pictoOf({ picto: product?.picto, category: product?.category ?? line.category }),
             quantity: lineQuantity(line),
             zone,
             keepsDays,

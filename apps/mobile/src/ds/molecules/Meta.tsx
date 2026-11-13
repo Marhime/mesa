@@ -9,7 +9,7 @@ import { space, type ColorToken } from '../tokens';
 export interface MetaProps {
   icon: IconName;
   text: string;
-  /** muted: metadata · success: "All at home", "Have" · ink: on lime and pastel cards · danger: "Almost out". */
+  /** muted: metadata · success: "All at home", "Have" · ink: on pastel cards · danger: "Almost out". */
   tone?: 'muted' | 'success' | 'ink' | 'danger';
   /** Semibold, for a status ("Have"). */
   strong?: boolean;

@@ -4,8 +4,9 @@
 import type { Category, GroceryItem, GrocerySource, GroceryStatus, Unit } from '@mesa/shared';
 import type { QueryClient } from '@tanstack/react-query';
 
-import { GROCERIES_KEY, refreshPantryViews } from './keys';
+import { GROCERIES_KEY } from './keys';
 import { GROCERY_SCOPE } from './queryClient';
+import { refresh } from './refresh';
 import { rpc, type PutAwayChoice } from './rpc';
 import { must, supabase } from './supabase';
 
@@ -30,6 +31,12 @@ export function rememberRealId(tempId: string, realId: string): void {
 /** The server id of a line (optimistic lines keep their temp id until the server answers). */
 export function resolveId(id: string): string {
   return realIdByTemp.get(id) ?? id;
+}
+
+/** A line this phone created (its temp id was swapped for this real one). */
+export function createdHere(realId: string): boolean {
+  for (const id of realIdByTemp.values()) if (id === realId) return true;
+  return false;
 }
 
 export function isTempId(id: string): boolean {
@@ -128,13 +135,12 @@ function complete(putAway: PutAwayChoice[]): Promise<number> {
 
 /** Call once, before the persisted cache is restored. */
 export function registerGroceryMutations(qc: QueryClient): void {
-  const refreshList = () => void qc.invalidateQueries({ queryKey: GROCERIES_KEY });
-  const refreshAll = () => {
-    refreshList();
-    refreshPantryViews(qc);
-  };
+  const refreshList = () => refresh(qc, 'groceries');
+  // Bought, or already at home: the pantry follows.
+  const refreshAll = () => refresh(qc, 'groceries.stocked');
   const register = <V, R>(key: readonly string[], fn: (vars: V) => Promise<R>, onSettled: () => void) =>
-    qc.setMutationDefaults([...key], { mutationFn: fn as (vars: unknown) => Promise<unknown>, scope: GROCERY_SCOPE, onSettled });
+    // The list works offline: its changes pause, are saved on the phone, and sync on reconnect.
+    qc.setMutationDefaults([...key], { mutationFn: fn as (vars: unknown) => Promise<unknown>, scope: GROCERY_SCOPE, onSettled, networkMode: 'online' });
   register(groceryMutationKeys.add, add, refreshList);
   register(groceryMutationKeys.undo, undo, refreshList);
   register(groceryMutationKeys.toggle, toggle, refreshList);

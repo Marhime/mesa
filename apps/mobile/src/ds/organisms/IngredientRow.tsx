@@ -1,15 +1,19 @@
-import type { Category } from '@mesa/shared';
+import type { Picto } from '@mesa/shared';
+import { View } from 'react-native';
+import Animated, { LayoutAnimationConfig } from 'react-native-reanimated';
 
-import { Chip } from '../atoms/Chip';
-import { Tag } from '../atoms/Tag';
-import { Meta } from '../molecules/Meta';
+import { Icon } from '../atoms/Icon';
+import { IconButton } from '../atoms/IconButton';
+import { markIn } from '../motion';
+import { createStyles } from '../theme';
+import { size } from '../tokens';
 import { FoodRow } from './FoodRow';
 
 export interface IngredientRowProps {
   name: string;
   /** Scaled, formatted quantity ("375 g"); empty when none. */
   quantity: string;
-  category: Category;
+  picto: Picto;
   /** At home or to buy; omitted while the pantry loads. */
   status?: 'have' | 'buy';
   /** At home and should be used soon. */
@@ -17,44 +21,62 @@ export interface IngredientRowProps {
   /** The source did not give the amount: we guessed it. */
   estimated?: boolean;
   optional?: boolean;
-  /** Fix a guessed amount (opens the editor). */
+  /** Change its name or amount (opens the editor). */
   onPress?: () => void;
-  /** "To buy" becomes a button: it's actually at home. */
+  /** It's actually at home: the empty mark becomes a button ("I have it", the `check` haptic at the touch). */
   onMarkHave?: () => void;
 }
 
-/** One ingredient: picto, name, amount, and whether it is at home ("Have") or on the way ("To buy"). */
-export function IngredientRow({ name, quantity, category, status, soon, estimated, optional, onPress, onMarkHave }: IngredientRowProps) {
-  const amount = estimated && quantity ? `About ${quantity}` : quantity;
-  const detail = [
-    amount || null,
-    soon ? 'use soon' : null,
-    optional ? 'optional' : null,
-    estimated ? (onPress ? 'guessed, tap to fix' : 'guessed') : null,
-  ]
-    .filter(Boolean)
-    .join(' · ');
-  const statusText = status === 'have' ? 'have it' : status === 'buy' ? 'to buy' : null;
+/**
+ * One ingredient on one line, like a cookbook: picto, the amount in its own column, the name, and a mark
+ * at the end: ✓ at home, ○ not yet (tap it when you have it). Optional, use soon or a guessed amount
+ * add a muted line.
+ */
+export function IngredientRow({ name, quantity, picto, status, soon, estimated, optional, onPress, onMarkHave }: IngredientRowProps) {
+  const styles = useStyles();
+  const amount = estimated && quantity ? `≈ ${quantity}` : quantity;
+  const detail = [optional ? 'optional' : null, soon ? 'use soon' : null, estimated ? 'amount guessed, tap to fix' : null].filter(Boolean).join(' · ');
+  const statusText = status === 'have' ? 'at home' : status === 'buy' ? 'not at home, on your list' : null;
   return (
     <FoodRow
-      category={category}
+      picto={picto}
       title={name}
+      amount={amount}
       detail={detail || undefined}
       detailIcon={estimated ? 'warning' : undefined}
-      onPress={estimated ? onPress : undefined}
-      accessibilityLabel={[name, detail, statusText].filter(Boolean).join(', ')}
-      accessibilityHint={estimated && onPress ? 'Opens the editor to fix the amount' : undefined}
+      onPress={onPress}
+      accessibilityLabel={[estimated && quantity ? `about ${quantity}` : quantity, name, detail, statusText].filter(Boolean).join(', ')}
+      accessibilityHint={onPress ? 'Change the name or amount' : undefined}
       trailing={
-        status === 'have' ? (
-          <Meta icon="checkCircle" text="Have" tone="success" strong />
-        ) : status === 'buy' ? (
-          onMarkHave ? (
-            <Chip label="To buy" accessibilityLabel={`${name}: to buy`} accessibilityHint="Marks it as at home" onPress={onMarkHave} />
-          ) : (
-            <Tag label="To buy" variant="outline" />
-          )
+        status ? (
+          <View style={styles.mark}>
+            {/* The ✓ settles in when it changes, not as the list opens. */}
+            <LayoutAnimationConfig skipEntering>
+              {status === 'have' ? (
+                <Animated.View entering={markIn()}>
+                  <Icon name="checkCircle" color="success" weight="fill" />
+                </Animated.View>
+              ) : onMarkHave ? (
+                <IconButton
+                  icon="circle"
+                  variant="plain"
+                  accessibilityLabel={`I have ${name}`}
+                  accessibilityHint="Marks it as at home and takes it off the list"
+                  haptic="check"
+                  onPress={onMarkHave}
+                />
+              ) : (
+                <Icon name="circle" color="inkMuted" />
+              )}
+            </LayoutAnimationConfig>
+          </View>
         ) : undefined
       }
     />
   );
 }
+
+const useStyles = createStyles(() => ({
+  // Marks and buttons share one column, so they line up down the list.
+  mark: { width: size.iconButton, alignItems: 'center' },
+}));

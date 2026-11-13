@@ -1,19 +1,14 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { AccessibilityInfo, View } from 'react-native';
-import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { AccessibilityInfo, StyleSheet, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { Text } from '../atoms/Text';
-import { Touchable } from '../atoms/Touchable';
+import { haptics } from '../haptics';
 import { useTabBarSpace } from '../layoutHooks';
-import { timing } from '../motion';
-import { createStyles } from '../theme';
-import { duration, layout, radius, shadow, size, space } from '../tokens';
+import { duration, size, space } from '../tokens';
+import { ToastView, type ToastContent } from './ToastView';
 
-export interface ToastOptions {
-  message: string;
-  /** Optional action, usually "Undo". */
-  action?: { label: string; onPress: () => void };
-  /** ms before it hides; default 4 s (6 s with an action). */
+export interface ToastOptions extends ToastContent {
+  /** ms before it hides; default 4 s (6 s with an action, 10 s while VoiceOver is on). */
   duration?: number;
 }
 
@@ -24,7 +19,17 @@ interface ToastApi {
   setLift: (lift: number) => void;
 }
 
+interface ToastHosts {
+  current: (ToastOptions & { id: number }) | null;
+  lift: number;
+  /** The outlet (inside a sheet's modal) that shows toasts now; null = the app root. */
+  host: number | null;
+  register: (id: number) => void;
+  unregister: (id: number) => void;
+}
+
 const ToastContext = createContext<ToastApi>({ show: () => undefined, hide: () => undefined, setLift: () => undefined });
+const HostsContext = createContext<ToastHosts>({ current: null, lift: 0, host: null, register: () => undefined, unregister: () => undefined });
 
 /** `const toast = useToast(); toast.show({ message: 'Added to Produce', action: { label: 'Undo', onPress } })`. */
 export function useToast(): ToastApi {
@@ -41,101 +46,117 @@ export function useToastInset(active: boolean): void {
   }, [active, setLift]);
 }
 
-/** Hosts the single toast of the app, floating above the tab bar. */
+/** True while VoiceOver runs: toasts then stay longer and queue behind what is being read. */
+function useScreenReader(): RefObject<boolean> {
+  const on = useRef(false);
+  useEffect(() => {
+    AccessibilityInfo.isScreenReaderEnabled()
+      .then((v) => {
+        on.current = v;
+      })
+      .catch(() => undefined);
+    const sub = AccessibilityInfo.addEventListener('screenReaderChanged', (v) => {
+      on.current = v;
+    });
+    return () => sub.remove();
+  }, []);
+  return on;
+}
+
+/**
+ * Hosts the single toast of the app, floating above the tab bar. A sheet's modal covers the app,
+ * so while one is open its ToastOutlet shows the toast instead (at the top, clear of its buttons).
+ */
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [current, setCurrent] = useState<(ToastOptions & { id: number }) | null>(null);
   const [lift, setLift] = useState(0);
+  const [hosts, setHosts] = useState<number[]>([]);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const counter = useRef(0);
+  const reader = useScreenReader();
 
   const hide = useCallback(() => {
     if (timer.current) clearTimeout(timer.current);
     setCurrent(null);
   }, []);
 
-  const show = useCallback((options: ToastOptions) => {
-    if (timer.current) clearTimeout(timer.current);
-    counter.current += 1;
-    setCurrent({ ...options, id: counter.current });
-    AccessibilityInfo.announceForAccessibility(options.message);
-    timer.current = setTimeout(
-      () => setCurrent(null),
-      options.duration ?? (options.action ? duration.toast * 1.5 : duration.toast),
-    );
-  }, []);
+  const show = useCallback(
+    (options: ToastOptions) => {
+      if (timer.current) clearTimeout(timer.current);
+      counter.current += 1;
+      setCurrent({ ...options, id: counter.current });
+      if (options.tone === 'error') haptics.warning();
+      // Queued: it doesn't cut off what VoiceOver is saying ("checked", "deleted").
+      AccessibilityInfo.announceForAccessibilityWithOptions(options.message, { queue: true });
+      const ms = reader.current
+        ? Math.max(options.duration ?? 0, duration.toastA11y)
+        : (options.duration ?? (options.action ? duration.toast * 1.5 : duration.toast));
+      timer.current = setTimeout(() => setCurrent(null), ms);
+    },
+    [reader],
+  );
 
-  useEffect(() => () => {
-    if (timer.current) clearTimeout(timer.current);
-  }, []);
+  useEffect(
+    () => () => {
+      if (timer.current) clearTimeout(timer.current);
+    },
+    [],
+  );
+
+  const register = useCallback((id: number) => setHosts((list) => [...list, id]), []);
+  const unregister = useCallback((id: number) => setHosts((list) => list.filter((h) => h !== id)), []);
+  const host = hosts.length > 0 ? hosts[hosts.length - 1]! : null;
 
   const api = useMemo(() => ({ show, hide, setLift }), [show, hide]);
+  const hostsValue = useMemo(() => ({ current, lift, host, register, unregister }), [current, lift, host, register, unregister]);
+  // Two-finger double tap (VoiceOver's magic tap) runs the toast's action: Undo without hunting for it.
+  const magicTap = current?.action
+    ? () => {
+        current.action?.onPress();
+        hide();
+      }
+    : undefined;
+
   return (
     <ToastContext.Provider value={api}>
-      {children}
-      {current ? <Toast key={current.id} {...current} lift={lift} onDismiss={hide} /> : null}
+      <HostsContext.Provider value={hostsValue}>
+        <View style={styles.root} onMagicTap={magicTap}>
+          {children}
+          {host === null ? <RootToast /> : null}
+        </View>
+      </HostsContext.Provider>
     </ToastContext.Provider>
   );
 }
 
-interface ToastViewProps extends ToastOptions {
-  onDismiss: () => void;
-  lift?: number;
-}
-
-/** Ink pill at the bottom of the screen, with an optional action. */
-export function Toast({ message, action, onDismiss, lift = 0 }: ToastViewProps) {
-  const styles = useStyles();
+function RootToast() {
+  const { current, lift } = useContext(HostsContext);
+  const { hide } = useContext(ToastContext);
   const tabSpace = useTabBarSpace();
-  const enter = useSharedValue(0);
-  useEffect(() => {
-    enter.set(withTiming(1, timing('small')));
-  }, [enter]);
-  const animated = useAnimatedStyle(() => ({
-    opacity: enter.get(),
-    transform: [{ translateY: (1 - enter.get()) * space.lg }],
-  }));
-
-  return (
-    <Animated.View style={[styles.wrap, { bottom: tabSpace.occupied + lift }, animated]} pointerEvents="box-none">
-      <View style={styles.pill} accessibilityLiveRegion="polite">
-        <Touchable onPress={onDismiss} accessibilityLabel={message} accessibilityHint="Dismisses the message" style={styles.message}>
-          <Text variant="label" color="onInk" numberOfLines={2}>
-            {message}
-          </Text>
-        </Touchable>
-        {action ? (
-          <Touchable
-            onPress={() => {
-              action.onPress();
-              onDismiss();
-            }}
-            accessibilityLabel={action.label}
-            style={styles.action}
-          >
-            <Text variant="label" color="onInk" underline>
-              {action.label}
-            </Text>
-          </Touchable>
-        ) : null}
-      </View>
-    </Animated.View>
-  );
+  if (!current) return null;
+  return <ToastView key={current.id} {...current} onDismiss={hide} offset={tabSpace.occupied + lift} />;
 }
 
-const useStyles = createStyles((t) => ({
-  wrap: { position: 'absolute', left: layout.screenMargin, right: layout.screenMargin, alignItems: 'center' },
-  pill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    minHeight: size.buttonMd,
-    borderRadius: radius.full,
-    backgroundColor: t.colors.ink,
-    paddingLeft: space.xl,
-    paddingRight: space.sm,
-    gap: space.sm,
-    maxWidth: size.readable,
-    ...shadow.lg,
-  },
-  message: { flexShrink: 1, paddingVertical: space.md, paddingRight: space.md },
-  action: { minHeight: size.touch, justifyContent: 'center', paddingHorizontal: space.md },
-}));
+let outletIds = 0;
+
+/**
+ * Renders toasts inside a modal (Sheet) while it is `active` (open, not closing: a toast fired as a
+ * sheet closes belongs on the screen underneath). The topmost active outlet wins.
+ */
+export function ToastOutlet({ active }: { active: boolean }) {
+  const { current, host, register, unregister } = useContext(HostsContext);
+  const { hide } = useContext(ToastContext);
+  const insets = useSafeAreaInsets();
+  const [id] = useState(() => ++outletIds);
+  useEffect(() => {
+    if (!active) return;
+    register(id);
+    return () => unregister(id);
+  }, [active, id, register, unregister]);
+  if (!current || host !== id) return null;
+  return <ToastView key={current.id} {...current} onDismiss={hide} placement="top" offset={insets.top + space.sm} />;
+}
+
+const styles = StyleSheet.create({
+  root: { flex: 1 },
+});

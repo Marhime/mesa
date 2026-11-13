@@ -31,14 +31,6 @@ export function categoryColor(theme: Theme, category: Category): string {
 }
 
 /**
- * Background for things drawn or written in ink on a category color (pictograms, Use soon cards):
- * the pastel, or for `other` the light sunken surface in both themes, so ink stays readable in dark mode.
- */
-export function tintColor(category: Category): string {
-  return category === 'other' ? palettes.light.surfaceSunken : categoryPastel[category];
-}
-
-/**
  * Builds a themed StyleSheet once per color scheme.
  * `const useStyles = createStyles((t) => ({ root: { backgroundColor: t.colors.surface } }))`.
  */

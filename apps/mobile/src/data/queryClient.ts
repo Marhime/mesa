@@ -1,10 +1,24 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import NetInfo from '@react-native-community/netinfo';
 import { createAsyncStoragePersister } from '@tanstack/query-async-storage-persister';
-import { focusManager, onlineManager, QueryClient } from '@tanstack/react-query';
+import { focusManager, MutationCache, onlineManager, QueryClient } from '@tanstack/react-query';
 import { AppState } from 'react-native';
 
-import { isNetworkError } from './errors';
+import { friendlyError, isNetworkError } from './errors';
+
+declare module '@tanstack/react-query' {
+  interface Register {
+    /** A mutation with an `errorMessage` says so in a toast when it fails (no call site needs onError). */
+    mutationMeta: { errorMessage?: string };
+  }
+}
+
+let notifyError: ((message: string) => void) | null = null;
+
+/** The app shell registers how failures are shown (an error toast). */
+export function setMutationErrorNotifier(fn: ((message: string) => void) | null): void {
+  notifyError = fn;
+}
 
 export const MINUTE = 60_000;
 export const HOUR = 60 * MINUTE;
@@ -15,6 +29,12 @@ export const WEEK = 7 * DAY;
 export const GROCERY_SCOPE = { id: 'groceries' };
 
 export const queryClient = new QueryClient({
+  mutationCache: new MutationCache({
+    onError: (error, _vars, _ctx, mutation) => {
+      const fallback = mutation.meta?.errorMessage;
+      if (fallback && notifyError) notifyError(friendlyError(error, fallback));
+    },
+  }),
   defaultOptions: {
     queries: {
       gcTime: WEEK,
@@ -23,8 +43,11 @@ export const queryClient = new QueryClient({
       networkMode: 'offlineFirst',
     },
     mutations: {
-      // Flaky supermarket signal: retry network failures a few times (1 s, 2 s, 4 s) before rolling back.
-      retry: (failureCount, error) => isNetworkError(error) && failureCount < 3,
+      // Offline, a write fails at once with "You're offline" instead of spinning: only the grocery list
+      // queues its changes on the phone (networkMode 'online' in registerGroceryMutations).
+      networkMode: 'always',
+      // Flaky supermarket signal: retry network failures a few times (1 s, 2 s, 4 s) while online.
+      retry: (failureCount, error) => isNetworkError(error) && failureCount < 3 && onlineManager.isOnline(),
     },
   },
 });

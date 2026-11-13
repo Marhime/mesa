@@ -11,20 +11,25 @@ import { rpc } from './rpc';
 /** Coverage by recipe id. */
 export function useRecipeCoverage() {
   const householdId = useHouseholdId();
-  const query = useQuery({ queryKey: COVERAGE_KEY, enabled: !!householdId, queryFn: () => rpc('recipe_coverage', {}) });
-  const byRecipe = useMemo(() => new Map((query.data ?? []).map((c) => [c.recipe_id, c])), [query.data]);
-  return { ...query, byRecipe };
+  const { data, isLoading, refetch } = useQuery({ queryKey: COVERAGE_KEY, enabled: !!householdId, queryFn: () => rpc('recipe_coverage', {}) });
+  const byRecipe = useMemo(() => new Map((data ?? []).map((c) => [c.recipe_id, c])), [data]);
+  return { byRecipe, isLoading, refetch };
 }
 
 /** A recipe cooked this recently is not suggested again first. */
 const RECENT_MS = 3 * 86_400_000;
+/** A favorite counts as needing this many fewer things to buy: it wins close calls, not every call. */
+const FAVORITE_BONUS = 2;
 
 /**
- * Best idea first: uses what should go soon, then needs the least shopping, then uses the most of what is
- * at home; recently cooked recipes go last. Pure.
+ * Best idea first: uses what should go soon, then needs the least shopping (a favorite as if it needed
+ * FAVORITE_BONUS fewer), then is a favorite, then uses the most of what is at home; recently cooked
+ * recipes go last. Pure.
  */
 export function rankIdeas(recipes: RecipeSummary[], coverage: ReadonlyMap<string, RecipeCoverage>, now: number = Date.now()) {
   const recent = (r: RecipeSummary) => r.last_cooked_at !== null && now - Date.parse(r.last_cooked_at) < RECENT_MS;
+  const shopping = (i: { recipe: RecipeSummary; coverage: RecipeCoverage }) =>
+    i.coverage.need_count - (i.recipe.is_favorite ? FAVORITE_BONUS : 0);
   return recipes
     .flatMap((recipe) => {
       const c = coverage.get(recipe.id);
@@ -34,7 +39,8 @@ export function rankIdeas(recipes: RecipeSummary[], coverage: ReadonlyMap<string
       (a, b) =>
         Number(recent(a.recipe)) - Number(recent(b.recipe)) ||
         b.coverage.soon_names.length - a.coverage.soon_names.length ||
-        a.coverage.need_count - b.coverage.need_count ||
+        shopping(a) - shopping(b) ||
+        Number(b.recipe.is_favorite) - Number(a.recipe.is_favorite) ||
         b.coverage.pantry_count - a.coverage.pantry_count,
     );
 }
@@ -73,7 +79,9 @@ export function ideaView(recipe: RecipeSummary, c: RecipeCoverage): IdeaView {
         ? `Uses your ${listNames(soon)} before ${soon.length === 1 ? 'it turns' : 'they turn'}.`
         : c.need_count === 0
           ? 'Everything is already at home.'
-          : undefined,
+          : recipe.is_favorite
+            ? 'One of your favorites.'
+            : undefined,
     shopping: shoppingLine(c),
   };
 }

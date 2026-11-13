@@ -6,8 +6,9 @@ import {
   PANTRY_LEVELS,
   friendlyError,
   keepsDaysFrom,
-  pantryAmount,
   pantryDateLine,
+  pantryEditAmount,
+  pantrySections,
   pantrySummary,
   plural,
   staplesLine,
@@ -18,19 +19,21 @@ import {
   usePantrySearch,
   usePantryStocking,
   usePantryUpdated,
+  usePictoLookup,
   usePullToRefresh,
   useRecipeCoverage,
+  useAskSheets,
   useResolveGroceryText,
   useScanReview,
+  useSyncLine,
   useStaples,
+  type Notify,
   type PantryEntry,
   type Zone,
 } from '@/data';
 import {
   AddPantrySheet,
   Button,
-  CardGrid,
-  CardGridSkeleton,
   EmptyState,
   ErrorState,
   FoodRow,
@@ -39,18 +42,18 @@ import {
   LargeTitle,
   ListGroup,
   ListRow,
+  ListSkeleton,
   PantryItemSheet,
-  PantryTile,
+  PantryList,
   ProposalSheet,
   Rail,
+  Reveal,
   ScanInbox,
   Screen,
   SectionHeader,
-  SegmentedControl,
   Stack,
   StaplesSheet,
   Tag,
-  Text,
   TextField,
   UseSoonCard,
   duration,
@@ -58,7 +61,8 @@ import {
   useToast,
 } from '@/ds';
 
-const ZONES: { value: Zone; label: string }[] = [
+// A scan still needs to know what it is looking at.
+const SWEEPS: { value: Zone; label: string }[] = [
   { value: 'fridge', label: 'Fridge' },
   { value: 'freezer', label: 'Freezer' },
   { value: 'cupboard', label: 'Cupboard' },
@@ -66,7 +70,7 @@ const ZONES: { value: Zone; label: string }[] = [
 
 export default function PantryScreen() {
   const router = useRouter();
-  const { stock } = useLocalSearchParams<{ stock?: string }>();
+  const { stock, review: reviewId } = useLocalSearchParams<{ stock?: string; review?: string }>();
   const toast = useToast();
   const pantry = usePantry();
   const updated = usePantryUpdated();
@@ -75,39 +79,54 @@ export default function PantryScreen() {
   const catalog = useCatalogIndex();
   const { add } = useAddGroceries();
   const resolve = useResolveGroceryText();
-  const notify = (message: string, action?: { label: string; onPress: () => void }) => toast.show({ message, action });
+  const notify: Notify = (message, notice) => toast.show({ message, ...notice });
   const actions = usePantryActions(notify);
-  const stocking = usePantryStocking((e) => notify(friendlyError(e, "Couldn't add that. Try again.")));
-  const [zone, setZone] = useState<Zone>('fridge');
+  const stocking = usePantryStocking((e) => notify(friendlyError(e, "Couldn't add that. Try again."), { tone: 'error' }));
+  const pictoFor = usePictoLookup();
   const [search, setSearch] = useState('');
   const [openId, setOpenId] = useState<string | null>(null);
   const [staplesOpen, setStaplesOpen] = useState(false);
-  const review = useScanReview((message) => notify(message));
+  const review = useScanReview(notify);
+  const sync = useSyncLine();
+  // A Use soon card asks for dishes that use it (the app's ideas sheet); its own recipes stay one tap away.
+  const sheets = useAskSheets();
   // The camera can't open over a sheet: let it slide away first.
-  const scanAfterSheet = (kind: 'sweep' | 'receipt') => {
+  const scanAfterSheet = (kind: 'sweep' | 'receipt', zone?: Zone) => {
     stocking.close();
     setTimeout(() => review.scan(kind, zone), duration.sheet);
   };
   const found = usePantrySearch(search, pantry.items);
   const pull = usePullToRefresh(pantry.refetch, coverage.refetch, staples.refetch);
 
-  // "Stock your pantry" from Home opens the sheet once per request.
+  // "Stock your pantry" from Home opens the sheet once per request (the request is then cleared).
   const { start } = stocking;
   useEffect(() => {
-    if (stock) start();
-  }, [stock, start]);
+    if (!stock) return;
+    start();
+    router.setParams({ stock: undefined });
+  }, [stock, start, router]);
+
+  // A tapped "scan ready" notification (or toast) opens that review.
+  const { openReview } = review;
+  useEffect(() => {
+    if (reviewId) openReview(reviewId);
+  }, [reviewId, openReview]);
 
   const q = search.trim();
-  const shown = q ? found.results : pantry.inZone(zone);
+  const sections = pantrySections(q ? found.results : pantry.atHome);
   const ideas = [...coverage.byRecipe.values()].filter((c) => c.soon_names.length > 0).length;
   const open: PantryEntry | undefined = pantry.all.find((e) => e.id === openId);
   const stapleItems = staples.data ?? [];
 
+  const firstRun = stocking.firstRun;
   const confirmStock = () =>
     void stocking.confirm().then((n) => {
+      if (n === null) return;
       if (n > 0) {
         haptics.success();
         notify(`${plural(n, 'thing', 'things')} in your pantry. Ideas just got better.`);
+      } else if (firstRun) {
+        notify('Basics saved. Add fresh things anytime.');
       }
     });
 
@@ -119,13 +138,14 @@ export default function PantryScreen() {
           title="Pantry"
           action={<IconButton icon="add" variant="ink" accessibilityLabel="Add to pantry" onPress={stocking.start} />}
         />
+        {sync ? <InlineNote icon="offline" text={sync} /> : null}
         <TextField label="Search the pantry" placeholder="Do we have…?" icon="search" value={search} onChangeText={setSearch} clearable returnKeyType="search" />
       </Stack>
 
       <ScanInbox {...review.inbox} />
 
       {pantry.isLoading ? (
-        <CardGridSkeleton />
+        <ListSkeleton rows={6} leading="picto" />
       ) : pantry.isError && !pantry.data ? (
         <ErrorState onRetry={() => void pantry.refetch()} />
       ) : pantry.all.length === 0 ? (
@@ -139,19 +159,19 @@ export default function PantryScreen() {
           <InlineNote text="Or skip it: what you buy lands here when you tap Done shopping." />
         </Stack>
       ) : q ? (
-        shown.length > 0 ? (
-          <PantryGrid items={shown} onOpen={setOpenId} />
+        sections.length > 0 ? (
+          <PantryList sections={sections} onOpen={setOpenId} />
         ) : (
           <Stack gap="sm" align="center">
             <EmptyState
               icon="search"
               title={`No ${q} at home`}
-              text={found.product ? `Mesa knows it as ${found.product.name_en.toLowerCase()}.` : undefined}
+              text={found.product ? `Also called ${found.product.name_en.toLowerCase()}.` : undefined}
               action={{
                 label: 'Add to groceries',
+                haptic: 'add',
                 onPress: () => {
-                  haptics.add();
-                  add(resolve(q), 'manual', (e) => notify(friendlyError(e, "Couldn't add that. Try again.")));
+                  add(resolve(q), 'manual', (e) => notify(friendlyError(e, "Couldn't add that. Try again."), { tone: 'error' }));
                   notify(`Added ${q} to groceries`);
                   setSearch('');
                 },
@@ -161,6 +181,7 @@ export default function PantryScreen() {
               <Button
                 label="I have it"
                 variant="ghost"
+                haptic="check"
                 onPress={() => {
                   actions.have(found.product!.id, found.product!.name_en);
                   setSearch('');
@@ -171,14 +192,14 @@ export default function PantryScreen() {
         )
       ) : (
         <>
-          {pantry.stale.length > 0 ? (
+          <Reveal visible={pantry.stale.length > 0} motion="fade">
             <Stack gap="md">
               <SectionHeader title="Still there?" subtitle="Past their date. Tap one to keep it or let it go." />
-              <ListGroup inset="none">
+              <ListGroup inset="picto">
                 {pantry.stale.map((e) => (
                   <FoodRow
                     key={e.id}
-                    category={e.category}
+                    picto={e.picto}
                     title={e.name}
                     detail={pantryDateLine(e)}
                     onPress={() => setOpenId(e.id)}
@@ -187,7 +208,7 @@ export default function PantryScreen() {
                 ))}
               </ListGroup>
             </Stack>
-          ) : null}
+          </Reveal>
 
           {pantry.useSoon.length > 0 ? (
             <Stack gap="md">
@@ -200,11 +221,11 @@ export default function PantryScreen() {
                   <UseSoonCard
                     key={item.key}
                     name={item.name}
-                    category={item.category}
+                    picto={item.picto}
                     when={item.when}
                     urgent={item.urgent}
                     freshness={item.freshness}
-                    onPress={() => router.navigate({ pathname: '/recipes', params: { uses: item.productId, usesName: item.name } })}
+                    onPress={() => sheets.openIdeas({ productId: item.productId, name: item.name })}
                   />
                 ))}
               </Rail>
@@ -212,15 +233,12 @@ export default function PantryScreen() {
           ) : null}
 
           <Stack gap="lg">
-            <SegmentedControl options={ZONES} value={zone} onChange={setZone} accessibilityLabel="Zone" />
-            {shown.length > 0 ? (
-              <PantryGrid items={shown} onOpen={setOpenId} />
+            {sections.length > 0 ? (
+              <PantryList sections={sections} onOpen={setOpenId} />
             ) : (
-              <Text variant="body" color="inkMuted" align="center">
-                {`Nothing in the ${ZONES.find((z) => z.value === zone)!.label.toLowerCase()}.`}
-              </Text>
+              <EmptyState size="section" title="Everything here is past its date" />
             )}
-            {zone === 'cupboard' && stapleItems.length > 0 ? (
+            {stapleItems.length > 0 ? (
               <ListGroup>
                 <ListRow
                   title="Always at home"
@@ -250,12 +268,12 @@ export default function PantryScreen() {
         }))}
         selected={stocking.selected}
         onToggle={stocking.toggle}
+        unsaved={stocking.changed}
         addCount={stocking.addCount}
         onConfirm={confirmStock}
         loading={stocking.pending}
         scan={{
-          sweepLabel: `Film the ${ZONES.find((z) => z.value === zone)!.label.toLowerCase()}`,
-          onSweep: () => scanAfterSheet('sweep'),
+          sweeps: SWEEPS.map((z) => ({ key: z.value, label: z.label, onPress: () => scanAfterSheet('sweep', z.value) })),
           onReceipt: () => scanAfterSheet('receipt'),
         }}
       />
@@ -268,25 +286,23 @@ export default function PantryScreen() {
         item={
           open
             ? {
+                id: open.id,
                 name: open.name,
-                category: open.category,
-                description: `${pantryAmount(open).text} · ${pantryDateLine(open)}`,
+                picto: open.picto,
+                description: pantryDateLine(open),
                 stale: open.state === 'check' || open.state === 'gone',
+                amount: pantryEditAmount(open),
                 level: open.level ?? 'full',
-                zone: open.zone,
                 keepsDays: keepsDaysFrom(open.expires_on),
                 keepsHint: pantryDateLine(open),
               }
             : null
         }
-        levels={PANTRY_LEVELS}
+        // Out is not a level here: "Ran out" is the sheet's footer action.
+        levels={PANTRY_LEVELS.filter((l) => l.value !== 'out')}
         keepsOptions={KEEPS_OPTIONS}
-        onLevel={(level) => {
-          if (!open) return;
-          actions.setLevel(open, level);
-          if (level === 'out') setOpenId(null);
-        }}
-        onZone={(z) => open && actions.setZone(open, z)}
+        onAmount={(amount) => open && actions.setAmount(open, amount)}
+        onLevel={(level) => open && actions.setLevel(open, level)}
         onKeeps={(days) => open && actions.setKeeps(open, days)}
         onStillGood={() => {
           if (open) actions.stillGood(open);
@@ -296,8 +312,8 @@ export default function PantryScreen() {
           if (open) actions.gone(open);
           setOpenId(null);
         }}
-        onAddToList={() => {
-          if (open) actions.addToList(open);
+        onRanOut={() => {
+          if (open) actions.setLevel(open, 'out');
           setOpenId(null);
         }}
       />
@@ -305,31 +321,10 @@ export default function PantryScreen() {
       <StaplesSheet
         visible={staplesOpen}
         onClose={() => setStaplesOpen(false)}
-        items={stapleItems.map((s) => ({ key: s.productId, name: s.name, category: s.category, isOut: s.isOut }))}
+        items={stapleItems.map((s) => ({ key: s.productId, name: s.name, picto: pictoFor(s.productId, s.category), isOut: s.isOut }))}
         onOut={(key) => actions.staple.out(key, stapleItems.find((s) => s.productId === key)?.name ?? 'It')}
         onBack={(key) => actions.staple.back(key)}
       />
     </Screen>
-  );
-}
-
-function PantryGrid({ items, onOpen }: { items: PantryEntry[]; onOpen: (id: string) => void }) {
-  return (
-    <CardGrid density="tight">
-      {items.map((e) => {
-        const amount = pantryAmount(e);
-        return (
-          <PantryTile
-            key={e.id}
-            name={e.name}
-            category={e.category}
-            amount={amount.text}
-            low={amount.low}
-            quarters={amount.quarters}
-            onPress={() => onOpen(e.id)}
-          />
-        );
-      })}
-    </CardGrid>
   );
 }

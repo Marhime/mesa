@@ -2,7 +2,9 @@
 import { spawn } from 'node:child_process';
 import { copyFile, readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { ImportError, MESSAGES } from './errors';
+import { authorFromYtDlp, type SourceAuthor } from './author';
+import { ImportError, type ErrorCode } from './errors';
+import { detectPlatform, parseHttpUrl } from './url';
 
 export interface YtDlpOptions {
   path: string;
@@ -20,6 +22,8 @@ export interface VideoMeta {
   videoIndex: number | null;
   /** Images of a post without video (Instagram carousel, Pinterest pin…), best size first. */
   imageUrls: string[];
+  /** Who posted it (channel, uploader), when yt-dlp says. */
+  author: SourceAuthor | null;
 }
 
 const MAX_VIDEO_SECONDS = 180;
@@ -71,6 +75,7 @@ export function parseYtDlpInfo(json: unknown): VideoMeta {
       hasVideo: videoPos >= 0,
       videoIndex: videoPos >= 0 ? videoPos + 1 : null,
       imageUrls: [...new Set(images)].slice(0, MAX_IMAGES),
+      author: authorFromYtDlp(json, first),
     };
   }
   const hasVideo = entryHasVideo(json);
@@ -83,20 +88,21 @@ export function parseYtDlpInfo(json: unknown): VideoMeta {
     hasVideo,
     videoIndex: null,
     imageUrls: !hasVideo && thumb ? [thumb] : [],
+    author: authorFromYtDlp(json),
   };
 }
 
-/** A short message for the person from yt-dlp's stderr. */
-export function ytDlpErrorMessage(stderr: string): string {
+/** Why yt-dlp failed, for the person, from its stderr. */
+export function ytDlpErrorCode(stderr: string): ErrorCode {
   const s = stderr.toLowerCase();
-  if (/unsupported url/.test(s)) return MESSAGES.unsupportedLink;
+  if (/unsupported url/.test(s)) return 'unsupportedLink';
   if (/private|login|log in|logged-in|sign in|cookies|rate-limit|rate limit|not available, rate|confirm you.?re not a bot|age-restricted|inappropriate/.test(s)) {
-    return MESSAGES.videoPrivate;
+    return 'videoPrivate';
   }
   if (/http error 404|not found|has been removed|deleted|no longer available|video unavailable|does not exist/.test(s)) {
-    return MESSAGES.videoUnavailable;
+    return 'videoUnavailable';
   }
-  return MESSAGES.videoFailed;
+  return 'videoFailed';
 }
 
 export class YtDlpError extends ImportError {
@@ -104,7 +110,7 @@ export class YtDlpError extends ImportError {
     readonly stderrTail: string,
     detail: string,
   ) {
-    super(ytDlpErrorMessage(stderrTail), { detail });
+    super(ytDlpErrorCode(stderrTail), { detail });
     this.name = 'YtDlpError';
   }
 }
@@ -114,7 +120,7 @@ interface RunResult {
   stderr: string;
 }
 
-function run(bin: string, args: string[], timeoutMs: number, signal?: AbortSignal): Promise<RunResult> {
+export function runYtDlp(bin: string, args: string[], timeoutMs: number, signal?: AbortSignal): Promise<RunResult> {
   return new Promise((resolve, reject) => {
     const child = spawn(bin, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -170,10 +176,23 @@ function run(bin: string, args: string[], timeoutMs: number, signal?: AbortSigna
 }
 
 /**
+ * The link yt-dlp is given: a video host's (url.ts) over http(s) on its default port, never a website, an
+ * address or a file. yt-dlp opens whatever it is handed, so every function here that gives it a link
+ * checks it first (callers already only pass video links: this is the last line).
+ */
+export function videoLink(url: string): string {
+  const u = /^https?:\/\//i.test(url) ? parseHttpUrl(url) : null;
+  if (!u || u.port !== '' || u.username !== '' || u.password !== '' || detectPlatform(url) === 'web') {
+    throw new ImportError('unsupportedLink', { detail: `not a video link: ${url.slice(0, 200)}` });
+  }
+  return url;
+}
+
+/**
  * yt-dlp saves cookies back into the file it was given; a private copy per run keeps the
  * mounted file read-only and avoids two jobs writing it at once.
  */
-async function commonArgs(opts: YtDlpOptions, workDir: string): Promise<string[]> {
+export async function commonArgs(opts: YtDlpOptions, workDir: string): Promise<string[]> {
   const args = ['--ignore-config', '--no-progress', '--no-cache-dir', '--socket-timeout', '20', '--retries', '2', '--extractor-retries', '1'];
   if (opts.cookies) {
     const copy = join(workDir, 'cookies.txt');
@@ -184,6 +203,7 @@ async function commonArgs(opts: YtDlpOptions, workDir: string): Promise<string[]
 }
 
 export async function fetchVideoMeta(opts: YtDlpOptions, url: string, workDir: string, signal?: AbortSignal, timeoutMs = META_TIMEOUT_MS): Promise<VideoMeta> {
+  const link = videoLink(url);
   const args = [
     ...(await commonArgs(opts, workDir)),
     '--dump-single-json',
@@ -192,9 +212,9 @@ export async function fetchVideoMeta(opts: YtDlpOptions, url: string, workDir: s
     '--playlist-end',
     String(MAX_IMAGES),
     '--',
-    url,
+    link,
   ];
-  const { stdout } = await run(opts.path, args, timeoutMs, signal);
+  const { stdout } = await runYtDlp(opts.path, args, timeoutMs, signal);
   let json: unknown;
   try {
     json = JSON.parse(stdout);
@@ -217,6 +237,7 @@ export async function downloadVideo(
   workDir: string,
   signal?: AbortSignal,
 ): Promise<{ path: string; mimeType: string; bytes: number }> {
+  const link = videoLink(url);
   const args = [
     ...(await commonArgs(opts, workDir)),
     '-f',
@@ -235,8 +256,8 @@ export async function downloadVideo(
   if (meta.videoIndex !== null) args.push('--playlist-items', String(meta.videoIndex));
   else args.push('--no-playlist');
   if (meta.duration !== null && meta.duration > MAX_VIDEO_SECONDS) args.push('--download-sections', `*0-${MAX_VIDEO_SECONDS}`);
-  args.push('--', url);
-  await run(opts.path, args, DOWNLOAD_TIMEOUT_MS, signal);
+  args.push('--', link);
+  await runYtDlp(opts.path, args, DOWNLOAD_TIMEOUT_MS, signal);
 
   const files = (await readdir(workDir)).filter((f) => f.startsWith('video.') && !/\.(?:part|ytdl|temp)$/.test(f));
   for (const f of files) {
@@ -252,7 +273,7 @@ export async function downloadVideo(
 
 export async function ytDlpVersion(opts: YtDlpOptions): Promise<string | null> {
   try {
-    const { stdout } = await run(opts.path, ['--version'], 15_000);
+    const { stdout } = await runYtDlp(opts.path, ['--version'], 15_000);
     return stdout.trim();
   } catch {
     return null;

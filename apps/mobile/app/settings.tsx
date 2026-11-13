@@ -2,10 +2,14 @@ import { useRouter } from 'expo-router';
 import { useState } from 'react';
 
 import {
+  appVersionLine,
   friendlyError,
+  inviteMessage,
   signOut,
   useCreateInvite,
   useHousehold,
+  useInviteCodeInput,
+  useJoinHousehold,
   useMembers,
   useProfile,
   useShareText,
@@ -19,6 +23,7 @@ import {
   ErrorState,
   Field,
   InviteSheet,
+  JoinKitchenSheet,
   ListGroup,
   ListRow,
   ListSkeleton,
@@ -26,8 +31,10 @@ import {
   SectionHeader,
   Stack,
   Stepper,
+  Text,
   TextField,
   TopBar,
+  useToast,
 } from '@/ds';
 
 export default function SettingsScreen() {
@@ -39,6 +46,10 @@ export default function SettingsScreen() {
   const updateName = useUpdateDisplayName();
   const invite = useCreateInvite();
   const share = useShareText();
+  const join = useJoinHousehold();
+  const toast = useToast();
+  const [joining, setJoining] = useState(false);
+  const joinCode = useInviteCodeInput();
   const [householdName, setHouseholdName] = useState<string | null>(null);
   const [myName, setMyName] = useState<string | null>(null);
   const [inviting, setInviting] = useState(false);
@@ -49,6 +60,19 @@ export default function SettingsScreen() {
     setInviting(true);
     invite.mutate();
   };
+  const openJoin = () => {
+    join.reset();
+    joinCode.clear();
+    setJoining(true);
+  };
+  const joinKitchen = () =>
+    join.mutate(joinCode.code, {
+      onSuccess: () => {
+        setJoining(false);
+        router.replace('/');
+        toast.show({ message: "You're in. Everything here is now shared with them." });
+      },
+    });
 
   return (
     <Screen header={<TopBar title="Settings" onBack={back} />}>
@@ -57,7 +81,7 @@ export default function SettingsScreen() {
         {household.isLoading ? (
           <ListSkeleton rows={2} />
         ) : household.isError && !household.data ? (
-          <ErrorState onRetry={() => void household.refetch()} />
+          <ErrorState size="section" onRetry={() => void household.refetch()} />
         ) : (
           <>
             <Field label="Name">
@@ -90,15 +114,16 @@ export default function SettingsScreen() {
         {members.isLoading ? (
           <ListSkeleton rows={2} />
         ) : members.isError && !members.data ? (
-          <ErrorState onRetry={() => void members.refetch()} />
+          <ErrorState size="section" onRetry={() => void members.refetch()} />
         ) : (
-          <ListGroup inset="leading">
+          <ListGroup inset="avatar">
             {(members.data ?? []).map((m) => (
               <ListRow key={m.id} leading={<Avatar name={m.name} />} title={m.name ?? 'No name yet'} subtitle={m.isMe ? 'You' : undefined} />
             ))}
           </ListGroup>
         )}
-        <Button label="Invite partner" variant="secondary" iconStart="invite" onPress={openInvite} />
+        <Button label="Invite partner" variant="secondary" iconStart="invite" fullWidth onPress={openInvite} />
+        <Button label="Join another kitchen" variant="ghost" fullWidth onPress={openJoin} />
       </Stack>
 
       <Stack gap="lg">
@@ -117,8 +142,12 @@ export default function SettingsScreen() {
             }}
           />
         </Field>
-        <Button label="Sign out" variant="secondary" tone="danger" iconStart="signOut" onPress={() => setLeaving(true)} />
+        <Button label="Sign out" variant="secondary" tone="danger" iconStart="signOut" fullWidth onPress={() => setLeaving(true)} />
       </Stack>
+
+      <Text variant="caption" color="inkMuted" align="center">
+        {appVersionLine()}
+      </Text>
 
       <InviteSheet
         visible={inviting}
@@ -126,8 +155,19 @@ export default function SettingsScreen() {
         loading={invite.isPending}
         error={invite.error ? friendlyError(invite.error, "Couldn't create a code. Try again.") : null}
         onRetry={() => invite.mutate()}
-        onShare={() => invite.data && share(`Join our kitchen on Mesa. Open the app, choose Join with a code, and type ${invite.data}`)}
+        onShare={() => invite.data && share(inviteMessage(invite.data))}
         onClose={() => setInviting(false)}
+      />
+      <JoinKitchenSheet
+        visible={joining}
+        onClose={() => setJoining(false)}
+        currentName={household.data?.name ?? 'this kitchen'}
+        code={joinCode.value}
+        onChangeCode={joinCode.onChangeText}
+        ready={joinCode.ready}
+        onJoin={joinKitchen}
+        joining={join.isPending}
+        error={join.error ? friendlyError(join.error) : null}
       />
       <ConfirmSheet
         visible={leaving}

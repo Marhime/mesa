@@ -1,4 +1,4 @@
--- Karla's feedback (Nov 2026): the Pantry grouped by type of food, and a grocery list about amounts.
+-- Tester feedback (Nov 2026): the Pantry grouped by type of food, and a grocery list about amounts.
 --   1. pantry_status also gives each row's family and picto (columns from …13_catalog_looks.sql).
 --   2. unplan no longer leaves a "0 g" line: what is left at zero has no amount.
 --   3. Typing "leche" on a line a recipe added makes it yours too: taking the recipe off the menu

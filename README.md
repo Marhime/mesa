@@ -1,83 +1,141 @@
-# Mesa — MVP étape 1
+# Mesa
 
-App iPhone pour le foyer : une liste de courses aussi rapide que Notes, triée par rayon et partagée ;
-l'import de recettes (YouTube Shorts, Instagram, TikTok, sites, captures d'écran, texte) ; « Up next »
-qui remplit la liste avec ce qui manque ; « Done shopping » qui range les achats dans le garde-manger
-(Pantry) ; « Cooked! » qui retire ce qui a été utilisé ; et une idée de repas pour ce soir qui utilise ce
-qui doit partir vite.
+**Your kitchen, understood.** Mesa is an iPhone app that takes the mental load out of home cooking. It
+keeps track of what a household has at home and of the recipes it saves. From that it suggests what to
+cook and fills the shopping list. Recipes can come from anywhere: a TikTok, a YouTube Short, a website, a
+screenshot.
 
-« Mesa » est un nom de travail.
+It is in daily use by its first household through TestFlight. The app is built with Expo and React
+Native, the backend runs on Supabase, and a TypeScript worker on a VPS does the AI work.
 
-## Ce qu'il y a dedans
+## What it does
 
-| Dossier | Contenu | Vérifié ici |
-| --- | --- | --- |
-| `apps/mobile` | App Expo SDK 58 (iOS), Expo Router, design system minimaliste dans `src/ds` | `tsc`, contrôle design system, bundle iOS (`expo export`) |
-| `apps/worker` | Service d'import pour ton VPS (Gemini, yt-dlp, schema.org) | `tsc`, 144 tests, build |
-| `packages/shared` | Saisie libre, unités, catalogue de 177 produits (EN/ES/FR) | `tsc`, 353 tests |
-| `supabase/migrations` | Schéma, RLS par foyer, fonctions, catalogue, bucket images | tests SQL sur Postgres (`pnpm test:db`) |
-| `infra/vps` | Docker Compose : worker + sauvegarde nocturne de la base | relu, pas construit (pas de Docker ici) |
+- **Import any recipe.** Share an Instagram, TikTok or YouTube video, a website or a few screenshots. Mesa
+  watches or reads it and writes the recipe down: ingredients, steps, and the timestamps in the video.
+- **Shopping list.** It is as fast to type into as Notes ("6 eggs, 1 L milk"), is sorted by aisle, and
+  stays in sync between phones within a second. When the shopping is done, the items go into the pantry.
+- **Pantry.** It is organized by food family. You fill it by filming a shelf or scanning a receipt; Mesa
+  proposes what it saw, and you confirm.
+- **What to cook.**
+  - Tonight's idea uses what has to go first.
+  - Up next adds the missing ingredients to the list.
+  - "Cooked!" takes what was used out of the pantry.
+- **Ask Mesa.** One assistant for the whole kitchen:
+  - questions about a recipe or what's at home;
+  - substitutions;
+  - "plan my week";
+  - real recipe videos found for you.
 
-Rien n'a encore tourné sur un iPhone ni contre un vrai projet Supabase : c'est la première chose à faire.
+  Answers stream in as they are written.
+- **Discovery.** Five recipe videos picked each week from what you actually cook, each with the reason
+  it was picked. You can also follow your favourite creators.
 
-## Démarrer (environ 30 minutes)
+Mesa's principles: it never invents a recipe and always cites its source. It proposes, and you decide.
+And it works in any country, in any language.
 
-### 1. Supabase (gratuit)
+## Architecture
 
-1. Crée un projet sur supabase.com.
-2. Applique les migrations :
-   ```bash
-   npx supabase login
-   npx supabase link --project-ref <ton-ref>
-   npx supabase db push
-   ```
-3. Authentication → Sign In / Providers → Email : laisse Email activé et **désactive « Confirm email »**. La connexion se fait par e-mail et mot de passe : aucun e-mail n'est envoyé, donc pas de SMTP à configurer.
-4. Récupère l'URL du projet, la clé anon (publique) et la clé service role (secrète, pour le service d'import seulement).
+```mermaid
+flowchart LR
+  app["iPhone app<br/>Expo · React Native"]
+  db[("Supabase<br/>Postgres · Auth · Realtime · Storage")]
+  worker["AI worker<br/>Node 22 · Docker on a VPS"]
+  ext["Gemini · yt-dlp · recipe sites"]
+  push["Expo push"]
 
-### 2. L'app sur ton iPhone
+  app -- "reads, RPC, writes a job (RLS)" --> db
+  db -- "live changes" --> app
+  db -- "new job (Realtime)" --> worker
+  worker -- "claims jobs, writes results" --> db
+  worker --> ext
+  worker --> push
+```
+
+The app never talks to an AI provider or a third-party site. It writes the input of a job, and row-level
+security lets it write nothing more. The worker claims the job, does the work and writes the result. The
+phones see the result arrive through Realtime.
+
+## Engineering highlights
+
+- **A reliable job queue in Postgres.** Workers claim jobs with `for update skip locked`, in two lanes, so
+  quick questions never wait behind a long video import. Realtime wakes idle workers at once, with polling
+  as the fallback. If a worker crashes, its jobs go back to the queue, for 3 attempts at most. When a worker
+  stops, the jobs in progress get time to finish.
+- **AI with guardrails.** Gemini sits behind a model interface, and each kind of job gets only what it
+  uses. If a model is busy, the worker moves on to the next one in a chain. A daily budget caps tokens and
+  calls, and each household has a quota. Every answer must follow a JSON schema, written once for any
+  model. Ask Mesa's text is parsed while it is still being written, so it can stream to the phone.
+- **Secure for many households.**
+  - Row-level security scopes every table to its household.
+  - Photos and receipts sit in private storage and are deleted after use.
+  - Invite codes have a limited number of attempts.
+  - Fetching a shared link cannot reach the server's own network: every resolved address and every
+    redirect is checked (SSRF).
+- **Works offline.** TanStack Query keeps a persisted cache, so the list and the recipes show at once,
+  even with no network. Changes appear before the server confirms them. Changes made offline wait, and
+  are sent when the connection returns (as long as the app stays open).
+- **A design system enforced by tooling.** It is built from tokens, atoms, molecules and organisms. A
+  check script fails if a screen uses raw styles, literal colors or numbers, or imports anything outside
+  the design system and data layers.
+- **Tested at every layer.**
+  - Over 900 unit tests (Vitest) cover the worker and the shared package.
+  - 23 SQL test suites replay every migration on a disposable Postgres.
+  - One suite checks that every join the API serves has exactly one foreign key.
+- **Shipping.**
+  - iOS builds go to TestFlight through EAS.
+  - Over-the-air updates are keyed to a native fingerprint, so JS-only fixes ship without a new build.
+  - The worker deploys with one script.
+  - The database is backed up every night.
+- **International from the start.** The shared catalog has 177 products and 1,588 aliases in English,
+  Spanish and French. The parser reads grocery lines and recipe lines typed freely.
+
+## Tech stack
+
+| Layer | Tools |
+| --- | --- |
+| Mobile | Expo SDK 58, React Native 0.88, Expo Router (typed routes), TanStack Query, Reanimated, iOS share extension |
+| Backend | Supabase: Postgres (row-level security, SQL functions), Auth (email, Sign in with Apple), Realtime, Storage |
+| Worker | Node 22, TypeScript, Gemini, yt-dlp, schema.org parsing, Docker Compose |
+| Shared | TypeScript package: free-text parsing, units and quantities, aisles, product catalog |
+| Tooling | pnpm workspaces, TypeScript strict, Vitest, SQL tests on Postgres, EAS Build / Update / Submit |
+
+## Repository layout
+
+| Path | What it holds |
+| --- | --- |
+| `apps/mobile` | The iPhone app: screens in `app/`, design system in `src/ds`, data layer in `src/data` |
+| `apps/worker` | The AI worker: imports, Ask Mesa, ideas, week plans, discovery |
+| `packages/shared` | Code shared by the app and the worker |
+| `supabase/migrations` | Schema, row-level security, SQL functions, catalog (30 migrations) |
+| `db-tests` | SQL tests run against every migration |
+| `infra/vps` | Docker Compose for the worker and the nightly backup, plus the deploy script |
+| `docs` | Product vision, roadmap, API contract, design system, release notes |
+
+## Running it locally
+
+You need Node 22, pnpm and Docker (for the SQL tests).
 
 ```bash
 pnpm install
-cp apps/mobile/.env.example apps/mobile/.env   # URL + clé anon
-pnpm mobile                                     # puis scanne le QR code avec Expo Go
+pnpm typecheck                        # the whole monorepo
+pnpm test                             # unit tests (shared + worker)
+pnpm test:db                          # migrations + SQL tests on a disposable Postgres
+pnpm --filter @mesa/mobile check:ds   # design system rules
+
+cp apps/mobile/.env.example apps/mobile/.env   # Supabase URL + anon key
+pnpm mobile                                    # Expo dev server
 ```
 
-Expo Go suffit pour la liste, les recettes, Up next et l'import par lien ou capture d'écran.
-Le partage depuis Instagram/YouTube, Sign in with Apple et les notifications demandent une
-« development build » (compte Apple Developer) : voir `apps/mobile/README.md`.
-
-### 3. Le service d'import sur le VPS
-
-```bash
-cd infra/vps
-cp .env.example .env    # SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, GEMINI_API_KEY, DATABASE_URL
-docker compose up -d --build
-docker compose logs -f worker
-```
-
-Clé Gemini : aistudio.google.com. Détails, mise à jour de yt-dlp et restauration d'une sauvegarde : `infra/vps/README.md`.
-
-### 4. Inviter Karla
-
-Settings → Invite → envoie-lui le code à 10 caractères (« ABCDE-FGHJK », valable 7 jours ; un nouveau code remplace
-le précédent). Elle se connecte et choisit « Join with a code ».
-
-## Commandes utiles
-
-```bash
-pnpm typecheck     # tout le monorepo
-pnpm test          # tests unitaires (shared + worker)
-pnpm test:db       # migrations + tests SQL sur un Postgres jetable
-```
-
-## À tester en premier (risques connus)
-
-- **Instagram et TikTok depuis le VPS** : les plateformes bloquent souvent les IP de serveurs. Si l'import échoue, ajoute un fichier de cookies (`infra/vps/README.md`) ; sinon la capture d'écran reste la solution de secours.
-- **Gemini** : le format de réponse et la lecture des URL YouTube n'ont pas encore été essayés contre l'API réelle. Importe 3 ou 4 Shorts dès le premier jour.
-- **Hors ligne** : la liste s'affiche sans réseau, et les modifications partent au retour du réseau tant que l'app reste ouverte.
+More detail on running the app and on its development build is in `apps/mobile/README.md`. Setting up
+the worker on a server is in `infra/vps/README.md`.
 
 ## Documentation
 
-- `docs/CONTRACT.md` : schéma, fonctions, API partagée
-- `docs/DESIGN_SYSTEM.md` : tokens et composants
-- `apps/mobile/README.md`, `infra/vps/README.md`
+| File | Contents |
+| --- | --- |
+| `docs/PRODUCT_VISION.md` | The product vision and promise |
+| `docs/ROADMAP.md` | What's done, what's next, the product principles (in French) |
+| `docs/CONTRACT.md` | Database schema, SQL functions, the API the app and worker share |
+| `docs/DESIGN_SYSTEM.md` | Tokens, components and interface rules |
+| `docs/DEPLOY.md` | Day-to-day deployment runbook (in French) |
+| `docs/RELEASE.md` | TestFlight and monitoring checklist (in French) |

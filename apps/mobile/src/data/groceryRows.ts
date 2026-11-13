@@ -1,4 +1,4 @@
-// A grocery line as the list shows it (Karla: "focused on a grocery list - quantity/weight"): the amount to
+// A grocery line as the list shows it (tester feedback: "focused on a grocery list - quantity/weight"): the amount to
 // buy on the right, the recipes it is for only in the item sheet. Pure.
 import { formatQuantity, type GroceryItem, type Unit } from '@mesa/shared';
 

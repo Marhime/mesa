@@ -64,7 +64,7 @@ export function useMembers() {
   });
 }
 
-/** Names for the header: me first, then the others; "Shared with Karla". */
+/** Names for the header: me first, then the others; "Shared with Sam". */
 export function useHouseholdPeople(): { names: (string | null)[]; sharedWith: string } {
   const members = useMembers().data ?? [];
   const me = members.filter((m) => m.isMe);

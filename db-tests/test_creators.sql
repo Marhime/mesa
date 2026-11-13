@@ -23,7 +23,7 @@ do $$ begin
   end;
 end $$;
 
--- Karla sees the follow; a stranger doesn't
+-- The partner sees the follow; a stranger doesn't
 select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000b', false);
 do $$ begin
   assert (select count(*) from public.followed_creators) = 1, 'the household shares its creators';

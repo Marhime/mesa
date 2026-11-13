@@ -1,4 +1,4 @@
-// The Pantry as a list by type of food (Karla: "divided by vegetables, fruits, lácteos"): one section per
+// The Pantry as a list by type of food (tester feedback: "divided by vegetables, fruits, lácteos"): one section per
 // family, in FAMILIES order, foods by name. Where a food is kept is not shown, except to tell apart two
 // rows of the same food.
 import { FAMILIES, FAMILY_LABEL, type Family, type Picto, type Zone } from '@mesa/shared';

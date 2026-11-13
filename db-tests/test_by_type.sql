@@ -17,7 +17,7 @@ do $$ begin
   assert (select picto from public.pantry_status where name_en = 'Cilantro' limit 1) = 'herb', 'and the picto';
 end $$;
 
--- A recipe adds 200 g of huitlacoche; Karla also types "huitlacoche"; the recipe leaves the menu
+-- A recipe adds 200 g of huitlacoche; the partner also types "huitlacoche"; the recipe leaves the menu
 insert into public.recipes (id, title, servings) values ('20000000-0000-0000-0000-000000000009', 'Quesadillas', 2);
 insert into public.recipe_ingredients (recipe_id, position, raw_text, name, product_id, quantity, unit) values
   ('20000000-0000-0000-0000-000000000009', 0, '200 g de huitlacoche', 'Huitlacoche', null, 200, 'g');
@@ -32,7 +32,7 @@ do $$ begin
 end $$;
 select public.unplan(:'up_next');
 do $$ begin
-  assert exists (select 1 from public.grocery_items where label = 'Huitlacoche' and status = 'to_buy'), 'the line Karla asked for stays';
+  assert exists (select 1 from public.grocery_items where label = 'Huitlacoche' and status = 'to_buy'), 'the line the partner asked for stays';
   assert (select quantity from public.grocery_items where label = 'Huitlacoche' and status = 'to_buy') is null, 'no "0 g" left behind';
 end $$;
 

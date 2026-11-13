@@ -4,7 +4,7 @@
 -- people and catalog (as the superuser running the tests)
 insert into auth.users (id, email) values
   ('00000000-0000-0000-0000-00000000000a', 'marhime@example.com'),
-  ('00000000-0000-0000-0000-00000000000b', 'karla@example.com'),
+  ('00000000-0000-0000-0000-00000000000b', 'partner@example.com'),
   ('00000000-0000-0000-0000-00000000000c', 'stranger@example.com');
 
 -- Test products with fixed ids. Named "Test ..." so they never collide with the real catalog
@@ -46,14 +46,14 @@ select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000a
 select public.create_household('Casa') as household \gset
 select public.create_invite() as code \gset
 
--- Karla joins with the code
+-- The partner joins with the code
 select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000b', false);
 select public.join_household(:'code') = :'household'::uuid as joined \gset
 do $$ begin
-  assert public.current_household_id() is not null, 'Karla is in a household';
+  assert public.current_household_id() is not null, 'the partner is in a household';
 end $$;
 
--- Karla adds avocados twice: one merged line
+-- The partner adds avocados twice: one merged line
 select (public.add_grocery_item('aguacates', '10000000-0000-0000-0000-000000000001', 2, 'unit', 'produce')).id as avo \gset
 select public.add_grocery_item('avocado', '10000000-0000-0000-0000-000000000001', 1, 'unit', 'produce');
 select public.add_grocery_item('Dish soap', null, null, null, 'household');

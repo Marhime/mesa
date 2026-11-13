@@ -2,11 +2,21 @@
 
 Expo SDK 58 · React Native 0.88 · Expo Router (typed routes) · TanStack Query (persisted cache) · Supabase.
 
-The MVP: sign in, household setup, Home (Tonight's idea, Use soon, Up next), Recipes, recipe detail and
-editor, Pantry, Groceries with "Put away" when shopping is done, Cooked! (takes what was used out of the
-pantry), Settings, and "Save to Mesa" from the iOS share sheet.
+The app has these screens:
 
-Needs the migrations up to `20261105000010_scans.sql` (`npx supabase db push`). TestFlight: `docs/RELEASE.md`.
+- **Sign in:** email and password, or Apple.
+- **Household setup:** create a kitchen or join one with a code.
+- **Four tabs:**
+  - Home: Tonight's idea, Use soon, Up next.
+  - Recipes: For you this week, your creators.
+  - Pantry: by food family; filming a shelf or scanning a receipt fills it.
+  - Groceries: "Done shopping" puts the purchases away.
+- **Recipes:** recipe detail and editor; Cooked! takes what was used out of the pantry.
+- **Ask Mesa:** the one assistant. It opens from the small ✦ button above the tab bar, on every tab.
+- **Elsewhere:** Settings, and "Save to Mesa" from the iOS share sheet.
+
+It needs every migration in `supabase/migrations` applied. Deploying, over-the-air updates and builds are
+in `docs/DEPLOY.md`; the TestFlight checklist is in `docs/RELEASE.md`.
 
 ## Run it
 
@@ -46,61 +56,35 @@ Then run `npx expo start --dev-client` and open Mesa on the phone.
 | --- | --- | --- |
 | `EXPO_PUBLIC_SUPABASE_URL` | `.env` locally, EAS environment for builds | Supabase → Project Settings → API |
 | `EXPO_PUBLIC_SUPABASE_ANON_KEY` | same | the **anon** public key (RLS protects the data) |
-| `EAS_PROJECT_ID` (optional) | shell or EAS environment | from `eas init`; enables push tokens |
-| `MESA_IOS_BUNDLE_ID` (optional) | shell or EAS environment | defaults to the placeholder `com.mesa.app` |
+| `EAS_PROJECT_ID` (optional) | shell or EAS environment | defaults to the Mesa EAS project (`app.config.ts`) |
+| `MESA_IOS_BUNDLE_ID` (optional) | shell or EAS environment | defaults to `com.marhime.mesa`; only for a second build |
 
 If the Supabase values are missing the app shows a "Mesa needs its keys" screen instead of crashing.
-`.env` is git-ignored, so EAS cloud builds need the values as EAS environment variables:
-
-```bash
-npx eas-cli@latest env:create --name EXPO_PUBLIC_SUPABASE_URL --value https://xxxx.supabase.co --environment production --environment preview --environment development --visibility plaintext
-npx eas-cli@latest env:create --name EXPO_PUBLIC_SUPABASE_ANON_KEY --value eyJ... --environment production --environment preview --environment development --visibility plaintext
-```
-
-## Supabase settings the app relies on
-
-1. Apply `supabase/migrations/*.sql` (schema, RLS, functions, `recipe-images` bucket, catalog).
-2. **Email + password, no emails sent.** Auth → Sign In / Providers → Email: keep Email enabled and
-   turn **off** "Confirm email". Sign-up then returns a session immediately, so no SMTP is needed.
-   (Password reset by email is not in the MVP; reset a password from the Supabase dashboard if needed.)
-3. **Sign in with Apple.** Auth → Providers → Apple → enable, and add the iOS bundle id
-   (`com.mesa.app` or yours) under *Client IDs*. Native sign-in needs no secret key.
-
-## Install on Karla's iPhone (TestFlight)
-
-You need the Apple Developer Program membership (99 USD a year) and an Expo account.
-
-1. Pick the real bundle id (e.g. `com.marhime.mesa`) and set it in `app.config.ts`
-   (`IOS_BUNDLE_ID`) or as `MESA_IOS_BUNDLE_ID`. `com.mesa.app` is only a placeholder.
-2. `cd apps/mobile && npx eas-cli@latest login && npx eas-cli@latest init` — copy the project id it
-   prints into `EAS_PROJECT_ID` (app.config.ts is dynamic, so EAS cannot write it for you).
-3. Add the Supabase values as EAS environment variables (above).
-4. `npx eas-cli@latest build --profile production --platform ios` — sign in with the Apple
-   account when asked; EAS creates the certificates, provisioning profiles, the App Group
-   (`group.<bundle id>`) and the share extension id (`<bundle id>.share-extension`), plus the push key.
-5. `npx eas-cli@latest submit --platform ios --latest` — uploads to App Store Connect.
-6. In App Store Connect → TestFlight: add Karla as an internal tester (invite her to your team under
-   Users and Access first) — she installs **TestFlight** from the App Store and accepts the invite.
+`.env` is git-ignored: EAS builds read the same values from the EAS environment (production, preview and
+development are set).
 
 `eas.json` has three profiles: `development` (dev client, internal), `preview` (internal ad-hoc build)
-and `production` (App Store / TestFlight, build number auto-increments).
+and `production` (App Store / TestFlight, build number auto-increments). Builds and over-the-air updates
+are in `docs/DEPLOY.md`.
 
 ## Code map
 
 ```
 app/                 Expo Router screens (thin: compose src/ds, read src/data)
   _layout.tsx        providers + auth/household gate (Stack.Protected)
-  sign-in.tsx        email code + Sign in with Apple
+  sign-in.tsx        email + password, Sign in with Apple
   setup.tsx          create or join a household
-  (tabs)/            Home, Recipes, Groceries + floating TabBar
+  (tabs)/            Home, Recipes, Pantry, Groceries + floating TabBar with the Mesa button (✦)
+  ask.tsx            Ask Mesa, the one assistant (opens from the Mesa button)
   recipe/[id].tsx    recipe detail, Plan it
+  cooked/[id].tsx    Cooked!: what was used comes out of the pantry
   editor.tsx         write or edit a recipe (?id=)
   settings.tsx       household, members, invite, sign out
   import.tsx         "Import recipe" for things shared into the app
   +native-intent.tsx keeps the share-extension deep link from hitting an unknown route
 src/ds/              design system: tokens, atoms, molecules, organisms (docs/DESIGN_SYSTEM.md)
 src/data/            Supabase client, TanStack Query hooks, one file per domain
-src/lib/             pure helpers (input parsing, text)
+src/lib/             pure helpers (input parsing, quantities, dates, text)
 scripts/check-ds.mjs fails if a screen uses raw styles, literal colors or numbers
 ```
 
@@ -125,7 +109,8 @@ npx expo-doctor
 - The grocery list, recipes and Up next are cached on the device (AsyncStorage) and show instantly,
   even offline. Changes are optimistic; offline changes wait and are sent when the connection comes
   back (while the app stays open — they are not kept across a restart).
-- Groceries refetch when the tab gains focus and every 10 s while it is open; imports poll every 3 s
-  while one is queued or processing.
+- Live sync (Supabase Realtime) brings the other phone's changes within a second. On top of it, the
+  grocery list reads again when it comes on screen and every 10 s while it stays there. Imports show their
+  progress live and fall back to a 3 s poll while live sync is down.
 - "Delete" on a grocery row sets `status = 'removed'` (so Undo can restore it); "Already have" calls
   `mark_have`.

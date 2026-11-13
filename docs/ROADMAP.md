@@ -35,7 +35,7 @@ favoris qui comptent (Cook again) · tâches IA en arrière-plan avec notificati
 | # | Quoi | Ce que vous voyez | Taille | Build ? |
 |---|---|---|---|---|
 | 5 | **Plan my week** ✅ | L'IA propose 4–5 dîners pour la semaine parmi vos recettes : ce qui finit au frigo d'abord, du temps quand il y en a, variété, favoris. Vous ajustez, un tap remplit la liste. | L | non |
-| 6 | **Le dîner décidé à deux** | « Cook tonight » fixe le repas sur les deux téléphones ; « Ask Karla » lui envoie 2 idées. | M | non |
+| 6 | **Le dîner décidé à deux** | « Cook tonight » fixe le repas sur les deux téléphones ; un tap envoie 2 idées à l'autre personne du foyer. | M | non |
 | 7 | ~~Adapter une recette~~ | Abandonné : c'est une question à Ask Mesa sur la recette (« pas de crème ? », « pour 2 ? »). | — | — |
 | 8 | **Mode cuisine** | Étape par étape en grand, minuteurs détectés dans le texte (« laisser mijoter 20 min »), écran qui reste allumé, saut à la vidéo. Minuteur sur l'écran verrouillé. | M | oui (Live Activity) |
 | 9 | **Restes** | « Il en reste ? » après Cooked! → une portion dans Use soon, proposée en premier. | S | non |

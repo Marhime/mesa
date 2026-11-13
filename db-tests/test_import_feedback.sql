@@ -1,7 +1,7 @@
 -- Honest import feedback (panel 2, lot A): who shared, stages, codes, per-person push tokens.
 \set ON_ERROR_STOP on
 
--- Karla shares a reel: the job is hers
+-- The partner shares a reel: the job is theirs
 set role authenticated;
 select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000b', false);
 insert into public.import_jobs (id, input_url) values ('40000000-0000-0000-0000-000000000001', 'https://www.instagram.com/reel/ABC/');
@@ -12,15 +12,15 @@ do $$ begin
 end $$;
 
 -- Her phone's token is hers; it follows whoever signs in on the device
-select public.register_push_token('ExponentPushToken[karla]');
+select public.register_push_token('ExponentPushToken[partner]');
 do $$ begin
-  assert (select user_id from public.push_tokens where token = 'ExponentPushToken[karla]')
-    = '00000000-0000-0000-0000-00000000000b', 'token belongs to Karla';
+  assert (select user_id from public.push_tokens where token = 'ExponentPushToken[partner]')
+    = '00000000-0000-0000-0000-00000000000b', 'token belongs to the partner';
 end $$;
 select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000a', false);
-select public.register_push_token('ExponentPushToken[karla]');
+select public.register_push_token('ExponentPushToken[partner]');
 do $$ begin
-  assert (select user_id from public.push_tokens where token = 'ExponentPushToken[karla]')
+  assert (select user_id from public.push_tokens where token = 'ExponentPushToken[partner]')
     = '00000000-0000-0000-0000-00000000000a', 'signing in as Marhime on that phone moves the token';
 end $$;
 

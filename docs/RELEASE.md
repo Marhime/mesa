@@ -1,6 +1,6 @@
 # Mettre Mesa sur TestFlight (v0, pour deux)
 
-Checklist pour installer Mesa sur ton iPhone et celui de Karla, et vous en servir au quotidien.
+Checklist pour installer Mesa sur ton iPhone et celui de l'autre personne du foyer, et vous en servir au quotidien.
 À faire dans l'ordre ; chaque étape dit comment vérifier qu'elle est bonne.
 
 ## 1. Base de données à jour — fait (migrations 1 à 10, Realtime, bucket `scans` privé)
@@ -43,14 +43,14 @@ migration 11, la liste des imports est en erreur.
 
 ```bash
 npx supabase db push --remote                         # migrations 11 → 14 (imports, quantités, garde-manger par type)
-MESA_VPS=root@2.25.211.21 infra/vps/deploy.sh         # le worker écrit les étapes et notifie la bonne personne
+MESA_VPS=root@<ip du VPS> infra/vps/deploy.sh         # le worker écrit les étapes et notifie la bonne personne
 ```
 
 Vérifier : dans les logs du worker, un import affiche `job_done` avec `waited_ms` ; dans l'app, la barre
 passe par « Opening the post », « Getting the video », « Watching the video », puis « Writing it down ».
 
 Supabase → Authentication → Sign In / Providers → Email : **décocher « Confirm email »**. Sinon
-l'inscription de Karla demande de cliquer un lien reçu par e-mail. L'app sait gérer ce cas (« Check your
+l'inscription de l'autre personne demande de cliquer un lien reçu par e-mail. L'app sait gérer ce cas (« Check your
 inbox »), mais le lien ouvre une page cassée sur iPhone.
 
 ## 4. Build et TestFlight
@@ -61,7 +61,7 @@ npx eas-cli@latest build --profile production --platform ios   # EAS crée certi
 npx eas-cli@latest submit --platform ios --latest                # envoie le build à App Store Connect
 ```
 
-Dans App Store Connect → Users and Access : ajoute l'Apple ID de Karla (rôle « Marketing » : il peut tester
+Dans App Store Connect → Users and Access : ajoute l'Apple ID de l'autre personne (rôle « Marketing » : il peut tester
 et ne donne accès ni aux certificats ni au code). Elle ne paie rien : seul le compte qui publie paie.
 Elle accepte depuis l'e-mail « You've been invited to join… » → **Accept invitation** → se connecte avec
 l'Apple ID qui a reçu l'e-mail. Si une page « Join the Apple Developer Program » / « Enroll » / 99 $ s'affiche,
@@ -76,10 +76,10 @@ compte de démo (e-mail + mot de passe) pour le relecteur, l'app exigeant une co
 ## 5. Première utilisation à deux
 
 1. Toi : crée le foyer, Settings → Invite partner → « Share code » (le message explique TestFlight).
-2. Karla : crée son compte (e-mail + mot de passe), « Join with a code » (elle peut coller tout ton message).
+2. L'autre personne : crée son compte (e-mail + mot de passe), « Join with a code » (elle peut coller tout ton message).
    Si elle a créé une cuisine par erreur : Settings → « Join another kitchen ».
 3. Pantry → « + » : cochez ce que vous avez déjà (≈ 90 s), ou filmez le frigo.
-4. Test du direct : ajoute « leche » sur ton téléphone → la ligne apparaît chez Karla en une seconde.
+4. Test du direct : ajoute « leche » sur ton téléphone → la ligne apparaît chez l'autre personne en une seconde.
 
 ## Retours
 
